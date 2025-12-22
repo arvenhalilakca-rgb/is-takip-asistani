@@ -4,6 +4,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import requests
 import pandas as pd
 import re
+from datetime import datetime
 
 # --- GÜVENLİK VE AYARLAR ---
 try:
@@ -64,8 +65,8 @@ def ana_verileri_getir():
 st.set_page_config(page_title="İş Asistanı", page_icon="💼", layout="wide")
 st.title("👨‍💼 Mobil İş Takip Asistanı")
 
-# Sekmeler: İş Ekle | Yönet | Analiz
-tab1, tab2, tab3 = st.tabs(["➕ Yeni İş Ekle", "✅ İşleri Yönet", "📊 Patron Paneli"])
+# Sekmeler: İş Ekle | Yönet | Defter (Yeni) | Analiz
+tab1, tab2, tab3, tab4 = st.tabs(["➕ Yeni İş Ekle", "✅ İşleri Yönet", "📒 Müşteri Defteri", "📊 Patron Paneli"])
 
 # --- TAB 1: İŞ EKLEME ---
 with tab1:
@@ -162,13 +163,71 @@ with tab2:
                                 for n in nums: whatsapp_gonder(n, msg)
                         st.rerun()
             else:
-                st.success("Tebrikler! Bekleyen hiç işiniz kalmadı. ☕️")
+                st.success("Bekleyen hiç işiniz kalmadı. ☕️")
 
     except Exception as e:
         st.error(f"Hata: {e}")
 
-# --- TAB 3: PATRON PANELİ (YENİ!) ---
+# --- TAB 3: MÜŞTERİ DEFTERİ (YENİ!) ---
 with tab3:
+    st.header("📒 Müşteri Özel Defteri")
+    
+    # 1. Müşteri Seçimi
+    df_musteriler = musterileri_getir()
+    if not df_musteriler.empty:
+        isim_listesi = df_musteriler["Ad Soyad"].tolist()
+        secilen_musteri_defter = st.selectbox("Dosyasını Açmak İstediğiniz Mükellef:", isim_listesi, key="defter_secim")
+        
+        st.divider()
+        
+        # 2. Geçmişi Getir
+        try:
+            raw_data = ana_verileri_getir()
+            df = pd.DataFrame(raw_data)
+            
+            if not df.empty and "Is Tanimi" in df.columns:
+                # Sadece seçilen müşteriye ait kayıtları filtrele
+                musteri_gecmisi = df[df["Is Tanimi"].str.contains(secilen_musteri_defter, na=False)]
+                
+                col_a, col_b = st.columns([2, 1])
+                
+                with col_a:
+                    st.subheader(f"📜 {secilen_musteri_defter} - Geçmiş Hareketler")
+                    if not musteri_gecmisi.empty:
+                        # Tabloyu göster
+                        st.dataframe(musteri_gecmisi[["Tarih", "Is Tanimi", "Durum"]], use_container_width=True)
+                    else:
+                        st.info("Bu mükellef için henüz bir kayıt bulunmuyor.")
+                
+                # 3. Özel Not Ekleme Bölümü
+                with col_b:
+                    st.markdown("### 📝 Görüşme Notu Ekle")
+                    with st.form("not_formu", clear_on_submit=True):
+                        st.caption("Buraya eklenen notlar 'Tamamlandı' olarak kaydedilir ve müşteriye mesaj gitmez.")
+                        not_icerik = st.text_area("Görüşme Detayı / Not", placeholder="Örn: Banka kredisi için bilanço istedi...")
+                        not_tarih = st.date_input("Not Tarihi")
+                        
+                        not_kaydet = st.form_submit_button("💾 Notu Arşive Ekle")
+                        
+                        if not_kaydet and not_icerik:
+                            sheet = google_sheet_baglan()
+                            t_str = not_tarih.strftime("%d.%m.%Y")
+                            s_str = datetime.now().strftime("%H:%M")
+                            # Not olduğunu belli etmek için başına [NOT] ekliyoruz
+                            tam_not = f"{secilen_musteri_defter} - [NOT] {not_icerik}"
+                            
+                            # Direkt 'Tamamlandi' olarak ekliyoruz ki iş listesini kirletmesin
+                            sheet.append_row([t_str, s_str, tam_not, "Gonderilmedi", "Tamamlandi"])
+                            st.success("Not deftere işlendi!")
+                            st.rerun()
+
+        except Exception as e:
+            st.error(f"Defter okunurken hata: {e}")
+    else:
+        st.warning("Müşteri listesi boş.")
+
+# --- TAB 4: PATRON PANELİ ---
+with tab4:
     st.header("📊 Ofis Performans Raporu")
     
     try:
@@ -176,33 +235,19 @@ with tab3:
         df = pd.DataFrame(raw_data)
         
         if not df.empty and "Durum" in df.columns:
-            # 1. Metrik Kartları
             toplam_is = len(df)
             biten_is = len(df[df["Durum"] == "Tamamlandi"])
             bekleyen_is = len(df[df["Durum"] != "Tamamlandi"])
             
             c1, c2, c3 = st.columns(3)
-            c1.metric("Toplam İş", toplam_is)
-            c2.metric("✅ Tamamlanan", biten_is)
-            c3.metric("⏳ Bekleyen", bekleyen_is, delta_color="inverse")
+            c1.metric("Toplam Kayıt", toplam_is)
+            c2.metric("✅ Tamamlanan/Notlar", biten_is)
+            c3.metric("⏳ Bekleyen İşler", bekleyen_is, delta_color="inverse")
             
             st.divider()
-            
-            # 2. Müşteri Analizi (En çok kime çalışıyoruz?)
-            st.subheader("🏆 En Çok Çalışılan Mükellefler")
-            
-            # "Ahmet Yılmaz - KDV" verisinden sadece "Ahmet Yılmaz" kısmını alıyoruz
+            st.subheader("🏆 Müşteri Yoğunluk Analizi")
             df['Musteri_Adi'] = df['Is Tanimi'].apply(lambda x: x.split(" - ")[0] if " - " in str(x) else "Diğer")
-            musteri_sayilari = df['Musteri_Adi'].value_counts()
-            
-            st.bar_chart(musteri_sayilari)
-            
-            # 3. Veri Tablosu
-            with st.expander("Tüm Arşiv Kayıtlarını Gör"):
-                st.dataframe(df)
-                
-        else:
-            st.info("Analiz için henüz yeterli veri yok.")
+            st.bar_chart(df['Musteri_Adi'].value_counts())
             
     except Exception as e:
         st.error(f"Analiz Hatası: {e}")
