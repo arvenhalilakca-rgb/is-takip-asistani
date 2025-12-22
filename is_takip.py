@@ -25,6 +25,7 @@ st.markdown("""
     div.block-container {padding-top: 1rem;}
     .stButton>button {width: 100%; border-radius: 6px; font-weight: bold;}
     .stRadio > div {flex-direction: row;} /* Radyo butonları yan yana */
+    div[data-testid="stMetricValue"] {font-size: 24px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -94,7 +95,7 @@ with st.sidebar:
     st.markdown("### 🏛️ Müşavir Panel")
     secim = st.radio("MENÜ", ["📊 Genel Bakış", "➕ İş Ekle", "✅ İş Yönetimi", "📂 Müşteri Arşivi", "🏢 Kuruluş Sihirbazı"])
     st.markdown("---")
-    st.caption("v.4.0 | Kuruluş Modülü")
+    st.caption("v.4.1 | Finansal Detaylar")
 
 # --- 1. DASHBOARD ---
 if secim == "📊 Genel Bakış":
@@ -206,13 +207,13 @@ elif secim == "📂 Müşteri Arşivi":
                             st.success("Kaydedildi!")
                             st.rerun()
 
-# --- 5. KURULUŞ SİHİRBAZI (YENİ!) ---
+# --- 5. KURULUŞ SİHİRBAZI ---
 elif secim == "🏢 Kuruluş Sihirbazı":
     st.header("🏗️ Yeni İşletme Kuruluş Formu")
-    st.info("Müşteriyle görüşme esnasında bu formu doldurarak hiçbir detayı atlamazsın.")
+    st.info("Müşteri görüşme detaylarını ve ücretlendirmeyi buradan kaydedin.")
 
     with st.container(border=True):
-        # Müşteri Adı Girişi (Listede yoksa elle yazsın)
+        # Müşteri Adı Girişi
         col_ad, col_tel = st.columns(2)
         aday_musteri = col_ad.text_input("Görüşülen Kişi / Aday Müşteri Adı")
         aday_tel = col_tel.text_input("Telefon Numarası")
@@ -229,54 +230,68 @@ elif secim == "🏢 Kuruluş Sihirbazı":
         # 2. İŞYERİ VE FAALİYET
         c3, c4 = st.columns(2)
         isyeri_tipi = c3.selectbox("🏠 İşyeri Durumu (Stopaj İçin)", ["Kiralık (Stopajlı)", "Kendine Ait (Tapulu)", "Sanal Ofis", "Aile Bireyine Ait (Emsal Kira)"])
-        faaliyet = c4.text_area("🛠️ Yapılacak İş (NACE için detaylı)", placeholder="Örn: E-ticaret üzerinden kıyafet satışı...")
+        faaliyet = c4.text_area("🛠️ Yapılacak İş (NACE için)", placeholder="Örn: Kırtasiye malzemeleri satışı...")
 
         st.markdown("---")
 
         # 3. KRİTİK SORULAR
-        st.subheader("⚠️ Kritik Kontroller")
+        st.subheader("⚠️ Teknik Kontroller")
         col_k1, col_k2, col_k3 = st.columns(3)
-        sgk_durumu = col_k1.selectbox("SGK Durumu (Bağkur Planı)", ["Başka Yerde 4a'lı (Sigortalı)", "Emekli", "Hiçbiri (Bağkur Başlar)", "Genç Girişimci Adayı"])
-        arac = col_k2.radio("🚗 İşletmeye Araç Kaydı?", ["Yok", "Binek Araç", "Ticari Araç"])
-        yazar_kasa = col_k3.radio("📠 Yazar Kasa Gerekli mi?", ["Evet", "Hayır (E-Fatura)", "Belli Değil"])
+        sgk_durumu = col_k1.selectbox("SGK Durumu", ["Başka Yerde 4a'lı", "Emekli", "Hiçbiri (Bağkur Başlar)", "Genç Girişimci"])
+        arac = col_k2.radio("🚗 Araç Kaydı?", ["Yok", "Binek", "Ticari"])
+        yazar_kasa = col_k3.radio("📠 Yazar Kasa?", ["Evet", "Hayır", "Belli Değil"])
+
+        st.markdown("---")
+
+        # 4. ÜCRET VE YASAL BİLDİRİMLER (YENİ!)
+        st.subheader("💰 Ücretlendirme ve Yasal Bildirimler")
+        c_fin1, c_fin2, c_fin3 = st.columns(3)
+        
+        muhasebe_ucreti = c_fin1.text_input("Aylık Muhasebe Ücreti", placeholder="Örn: 3.000 TL")
+        acilis_bedeli = c_fin2.text_input("Kuruluş Hizmet Bedeli", placeholder="Örn: 5.000 TL")
+        faydalanici = c_fin3.radio("Gerçek Faydalanıcı Bildirimi?", ["Evet, Yapılacak", "Hayır / Gerek Yok"])
 
         st.markdown("---")
         
         # SONUÇ VE KAYIT
-        notlar = st.text_area("📝 Ekstra Notlar / Fiyat Teklifi", placeholder="Defter tasdik ücreti 5000 TL söylendi...")
+        notlar = st.text_area("📝 Ekstra Notlar", placeholder="Varsa diğer detaylar...")
         
-        kaydet_btn = st.button("💾 Görüşmeyi Kaydet ve Dosya Oluştur", use_container_width=True, type="primary")
+        kaydet_btn = st.button("💾 Görüşmeyi ve Ücreti Kaydet", use_container_width=True, type="primary")
 
         if kaydet_btn and aday_musteri:
-            # Rapor Metni Oluştur
+            # Rapor Metni
             rapor = f"""
             GÖRÜŞME RAPORU ({datetime.now().strftime("%d.%m.%Y")})
             ------------------------------------------
             Müşteri: {aday_musteri} ({aday_tel})
             Tür: {sirket_turu} | Usul: {vergi_usulu}
             İşyeri: {isyeri_tipi}
-            Faaliyet: {faaliyet}
             ------------------------------------------
+            💰 MALİ KONULAR
+            Aylık Ücret: {muhasebe_ucreti}
+            Açılış Bedeli: {acilis_bedeli}
+            Gerçek Faydalanıcı: {faydalanici}
+            ------------------------------------------
+            TEKNİK DETAY
             SGK: {sgk_durumu}
             Araç: {arac} | ÖKC: {yazar_kasa}
-            ------------------------------------------
-            ÖZEL NOTLAR: {notlar}
+            Faaliyet: {faaliyet}
+            Not: {notlar}
             """
             
             # Google Sheet'e Kaydet
             sheet = google_sheet_baglan("Sheet1")
-            # Tarih, Saat, İş (Rapor), Mesaj, Durum, Dosya
             sheet.append_row([
                 datetime.now().strftime("%d.%m.%Y"), 
                 datetime.now().strftime("%H:%M"), 
-                f"{aday_musteri} - [KURULUŞ GÖRÜŞMESİ] (Detaylar Kaydedildi)", 
+                f"{aday_musteri} - [AÇILIŞ GÖRÜŞMESİ] (Detaylar Kaydedildi)", 
                 "-", 
                 "Tamamlandi", 
                 "-"
             ])
             
-            # Ayrıca WhatsApp Grubuna Rapor At
-            whatsapp_gonder(GRUP_ID, f"🆕 *YENİ KURULUŞ GÖRÜŞMESİ*\n{rapor}")
+            # WhatsApp Grubuna Rapor At
+            whatsapp_gonder(GRUP_ID, f"🆕 *YENİ İŞ VE ÜCRET RAPORU*\n{rapor}")
             
-            st.success("Görüşme başarıyla kaydedildi! Gruba rapor gönderildi.")
-            st.code(rapor, language="text") # Ekrana da raporu basar
+            st.success("Görüşme ve Fiyat Anlaşması Kaydedildi!")
+            st.code(rapor, language="text")
