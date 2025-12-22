@@ -17,9 +17,14 @@ except:
     st.stop()
 
 # --- FONKSİYONLAR ---
-def google_sheet_baglan():
+def google_sheet_baglan(sayfa_adi="Sheet1"):
     client = gspread.authorize(creds)
-    return client.open("Is_Takip_Sistemi").sheet1
+    # Eğer sayfa adı verilmezse varsayılanı (Ana tabloyu) aç
+    if sayfa_adi == "Sheet1":
+        return client.open("Is_Takip_Sistemi").sheet1
+    else:
+        # Müşteriler sayfasını aç
+        return client.open("Is_Takip_Sistemi").worksheet(sayfa_adi)
 
 def whatsapp_gonder(mesaj):
     url = f"https://api.green-api.com/waInstance{ID_INSTANCE}/sendMessage/{API_TOKEN}"
@@ -31,17 +36,26 @@ def whatsapp_gonder(mesaj):
         return False
 
 def verileri_getir():
-    sheet = google_sheet_baglan()
+    sheet = google_sheet_baglan() # Ana sayfayı getir
     data = sheet.get_all_records()
     return pd.DataFrame(data)
+
+def musterileri_getir():
+    try:
+        sheet = google_sheet_baglan("Musteriler") # Senin yeni açtığın sayfa
+        veriler = sheet.get_all_records()
+        df = pd.DataFrame(veriler)
+        # Sadece Ad Soyad sütununu liste yap
+        return df["Ad Soyad"].tolist()
+    except Exception as e:
+        return []
 
 # --- SAYFA TASARIMI ---
 st.set_page_config(page_title="İş Asistanı", page_icon="💼")
 
 st.title("👨‍💼 Mobil İş Takip Asistanı")
-st.success("Bulut Sistemi Aktif ☁️")
 
-# --- SEKME YAPISI (Giriş ve Liste) ---
+# --- SEKME YAPISI ---
 tab1, tab2 = st.tabs(["➕ Yeni İş Ekle", "📋 Listeyi Gör"])
 
 with tab1:
@@ -52,25 +66,38 @@ with tab1:
         with col2:
             saat = st.time_input("Saat")
         
-        is_tanimi = st.text_input("İş Tanımı", placeholder="Örn: Ahmet Bey ile BİGFOTT KAFE toplantısı")
+        # --- YENİ EKLENEN KISIM: AÇILIR LİSTE ---
+        musteri_listesi = musterileri_getir()
+        
+        if musteri_listesi:
+            # Excel'den gelen isimleri kutuya koyuyoruz
+            secilen_musteri = st.selectbox("Mükellef Seç", musteri_listesi)
+        else:
+            st.warning("Müşteri listesi okunamadı! Sayfa adının 'Musteriler' olduğundan emin ol.")
+            secilen_musteri = st.text_input("Müşteri Adı (Manuel)")
+
+        is_notu = st.text_input("Yapılacak İş / Not", placeholder="Örn: KDV Beyannamesi Onayı")
         
         submit_btn = st.form_submit_button("✅ Kaydet ve Gönder")
 
-        if submit_btn and is_tanimi:
+        if submit_btn and is_notu:
             try:
-                sheet = google_sheet_baglan()
+                sheet = google_sheet_baglan() # Kayıt ana sayfaya yapılacak
                 tarih_str = tarih.strftime("%d.%m.%Y")
                 saat_str = saat.strftime("%H:%M")
                 
+                # İsim ve Notu birleştiriyoruz
+                tam_is_tanimi = f"{secilen_musteri} - {is_notu}"
+                
                 # Google Sheets'e Ekle
-                sheet.append_row([tarih_str, saat_str, is_tanimi, "Gonderildi", "Bekliyor"])
+                sheet.append_row([tarih_str, saat_str, tam_is_tanimi, "Gonderildi", "Bekliyor"])
                 
                 # WhatsApp'a Gönder
-                mesaj = f"📅 *YENİ PLANLAMA*\n\n📌 *İş:* {is_tanimi}\n🗓 *Tarih:* {tarih_str}\n🕐 *Saat:* {saat_str}"
+                mesaj = f"📅 *YENİ PLANLAMA*\n\n👤 *Mükellef:* {secilen_musteri}\n📌 *İş:* {is_notu}\n🗓 *Tarih:* {tarih_str} {saat_str}"
                 whatsapp_gonder(mesaj)
                 
                 st.balloons()
-                st.success(f"'{is_tanimi}' başarıyla kaydedildi!")
+                st.success(f"'{secilen_musteri}' için iş başarıyla oluşturuldu!")
                 
             except Exception as e:
                 st.error(f"Hata oluştu: {e}")
@@ -83,7 +110,6 @@ with tab2:
     try:
         df = verileri_getir()
         if not df.empty:
-            # Tabloyu daha şık gösterelim
             st.dataframe(df, use_container_width=True)
         else:
             st.info("Henüz kayıtlı bir iş yok.")
