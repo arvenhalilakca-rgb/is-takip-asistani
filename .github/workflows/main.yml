@@ -1,0 +1,31 @@
+name: Is Takip Robotu 🤖
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"  # Her 30 dakikada bir çalış
+  workflow_dispatch:        # İstediğinde manuel tetiklemek için
+
+jobs:
+  calistir:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Kodları Çek
+        uses: actions/checkout@v3
+
+      - name: Python Kur
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Kütüphaneleri Yükle
+        run: |
+          pip install gspread oauth2client requests pandas
+
+      - name: Robotu Çalıştır 🚀
+        env:
+          ID_INSTANCE: ${{ secrets.ID_INSTANCE }}
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+          GRUP_ID: ${{ secrets.GRUP_ID }}
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+        run: python hatirlatici.py
