@@ -6,7 +6,47 @@ import pandas as pd
 import re
 from datetime import datetime
 
-# --- GÜVENLİK VE AYARLAR ---
+# --- SAYFA AYARLARI (İLK SATIR OLMALI) ---
+st.set_page_config(
+    page_title="Müşavir Asistanı",
+    page_icon="⚖️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# --- TASARIM İÇİN CSS (SİHİRLİ DOKUNUŞ) ---
+st.markdown("""
+    <style>
+    /* Ana arka planı hafif gri yapalım ki kartlar öne çıksın */
+    .stApp {background-color: #f8f9fa;}
+    
+    /* Yan menü (Sidebar) rengi */
+    [data-testid="stSidebar"] {
+        background-color: #2c3e50;
+    }
+    [data-testid="stSidebar"] * {
+        color: white !important;
+    }
+    
+    /* Kart Görünümü (Beyaz kutular) */
+    div.block-container {padding-top: 2rem;}
+    div[data-testid="stMetricValue"] {font-size: 28px;}
+    
+    /* Tablo başlıkları */
+    thead tr th:first-child {display:none}
+    tbody th {display:none}
+    
+    /* Butonları Güzelleştir */
+    .stButton>button {
+        width: 100%;
+        border-radius: 8px;
+        height: 3em;
+        font-weight: bold;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- GÜVENLİK VE BAĞLANTILAR ---
 try:
     ID_INSTANCE = st.secrets["ID_INSTANCE"]
     API_TOKEN = st.secrets["API_TOKEN"]
@@ -14,10 +54,9 @@ try:
     creds_dict = st.secrets["gcp_service_account"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
 except:
-    st.error("⚠️ Sistem Bulut modunda değil veya şifreler eksik!")
+    st.error("⚠️ Bağlantı hatası: Şifreler eksik.")
     st.stop()
 
-# --- FONKSİYONLAR ---
 def google_sheet_baglan(sayfa_adi="Sheet1"):
     client = gspread.authorize(creds)
     if sayfa_adi == "Sheet1":
@@ -49,205 +88,195 @@ def whatsapp_gonder(chat_id, mesaj):
     except:
         return False
 
-def musterileri_getir():
+def verileri_getir(sayfa="Ana"):
     try:
-        sheet = google_sheet_baglan("Musteriler")
-        veriler = sheet.get_all_records()
-        return pd.DataFrame(veriler)
+        if sayfa == "Musteriler":
+            sheet = google_sheet_baglan("Musteriler")
+            return pd.DataFrame(sheet.get_all_records())
+        else:
+            sheet = google_sheet_baglan()
+            return pd.DataFrame(sheet.get_all_records())
     except:
         return pd.DataFrame()
 
-def ana_verileri_getir():
-    sheet = google_sheet_baglan()
-    return sheet.get_all_records()
+# --- SOL MENÜ TASARIMI ---
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=80)
+    st.title("Müşavir Panel")
+    st.markdown("---")
+    secim = st.radio("MENÜ", ["📊 Genel Durum", "➕ Yeni İş Ekle", "✅ İş Yönetimi", "📒 Müşteri Defteri"])
+    st.markdown("---")
+    st.info("Sistem Aktif 🟢")
 
-# --- SAYFA TASARIMI ---
-st.set_page_config(page_title="İş Asistanı", page_icon="💼", layout="wide")
-st.title("👨‍💼 Mobil İş Takip Asistanı")
-
-# Sekmeler: İş Ekle | Yönet | Defter (Yeni) | Analiz
-tab1, tab2, tab3, tab4 = st.tabs(["➕ Yeni İş Ekle", "✅ İşleri Yönet", "📒 Müşteri Defteri", "📊 Patron Paneli"])
-
-# --- TAB 1: İŞ EKLEME ---
-with tab1:
-    with st.form("is_formu", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1: tarih = st.date_input("Tarih")
-        with col2: saat = st.time_input("Saat")
+# --- 1. SAYFA: GENEL DURUM (DASHBOARD) ---
+if secim == "📊 Genel Durum":
+    st.markdown("## 📊 Ofis Performans Raporu")
+    st.markdown("Bugünkü durum özeti aşağıdadır.")
+    
+    df = verileri_getir()
+    if not df.empty and "Durum" in df.columns:
+        col1, col2, col3, col4 = st.columns(4)
         
-        df_musteriler = musterileri_getir()
-        bulunan_numaralar = []
+        toplam = len(df)
+        biten = len(df[df["Durum"] == "Tamamlandi"])
+        bekleyen = len(df[df["Durum"] != "Tamamlandi"])
+        basari_orani = int((biten / toplam) * 100) if toplam > 0 else 0
         
-        if not df_musteriler.empty:
-            isim_listesi = df_musteriler["Ad Soyad"].tolist()
-            secilen_musteri = st.selectbox("Mükellef Seç", isim_listesi)
-            if secilen_musteri:
-                satir = df_musteriler[df_musteriler["Ad Soyad"] == secilen_musteri]
+        col1.metric("Toplam İş", f"{toplam} Adet", border=True)
+        col2.metric("Tamamlanan", f"{biten} Adet", "✅", border=True)
+        col3.metric("Bekleyen", f"{bekleyen} Adet", "⏳", delta_color="inverse", border=True)
+        col4.metric("Başarı Oranı", f"%{basari_orani}", border=True)
+        
+        st.write("")
+        col_g1, col_g2 = st.columns([2,1])
+        
+        with col_g1:
+            st.subheader("🗓 Son Eklenen İşler")
+            # Tabloyu renklendir
+            st.dataframe(
+                df[["Tarih", "Is Tanimi", "Durum"]].tail(5),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Durum": st.column_config.TextColumn(
+                        "Durum",
+                        help="İş Durumu",
+                        validate="^(Tamamlandi|Bekliyor)$"
+                    )
+                }
+            )
+            
+        with col_g2:
+            st.subheader("🏆 Müşteri Yoğunluğu")
+            df['Musteri'] = df['Is Tanimi'].apply(lambda x: x.split(" - ")[0] if " - " in str(x) else "Diğer")
+            st.bar_chart(df['Musteri'].value_counts())
+
+# --- 2. SAYFA: YENİ İŞ EKLE ---
+elif secim == "➕ Yeni İş Ekle":
+    st.markdown("## 📝 Yeni Görev Oluştur")
+    
+    with st.container(border=True):
+        with st.form("is_formu", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            tarih = col1.date_input("Tarih")
+            saat = col2.time_input("Saat")
+            
+            df_m = verileri_getir("Musteriler")
+            isimler = df_m["Ad Soyad"].tolist() if not df_m.empty else []
+            
+            secilen_musteri = st.selectbox("Mükellef Seçiniz", isimler)
+            
+            # Telefon kontrolü
+            bulunan_numaralar = []
+            if secilen_musteri and not df_m.empty:
+                satir = df_m[df_m["Ad Soyad"] == secilen_musteri]
                 if not satir.empty:
-                    ham_veri = satir.iloc[0]["Telefon"]
-                    bulunan_numaralar = numaralari_ayikla(ham_veri)
-                    if bulunan_numaralar: 
-                        st.caption(f"📞 Kayıtlı Numara Sayısı: {len(bulunan_numaralar)}")
-        else:
-            secilen_musteri = st.text_input("Müşteri Adı (Manuel)")
-            st.warning("⚠️ Müşteri listesi boş.")
-
-        is_notu = st.text_input("Yapılacak İş / Not", placeholder="Örn: KDV Beyannamesi")
-        st.write("---")
-        musteriye_gonderilsin_mi = st.checkbox("📨 Mükellefe Bildirim Gönder")
-        
-        submit_btn = st.form_submit_button("✅ Kaydet ve Başlat")
-
-        if submit_btn and is_notu:
-            try:
-                sheet = google_sheet_baglan()
-                tarih_str = tarih.strftime("%d.%m.%Y")
-                saat_str = saat.strftime("%H:%M")
-                tam_is_tanimi = f"{secilen_musteri} - {is_notu}"
-                
-                sheet.append_row([tarih_str, saat_str, tam_is_tanimi, "Gonderildi", "Bekliyor"])
-                st.info("✅ İş sisteme girildi.")
-                
-                whatsapp_gonder(GRUP_ID, f"📅 *YENİ İŞ*\n👤 {secilen_musteri}\n📌 {is_notu}\n🗓 {tarih_str} {saat_str}")
-                
-                if musteriye_gonderilsin_mi and bulunan_numaralar:
-                    msg = f"Sayın *{secilen_musteri}*,\n\nİşleminiz ({is_notu}) iş takvimimize alınmıştır.\n\nBilgilerinize.\n*Mali Müşavirlik Ofisi*"
-                    for num in bulunan_numaralar: whatsapp_gonder(num, msg)
-                    st.success("Mükellefe iletildi.")
-                
-                st.balloons()
-            except Exception as e:
-                st.error(f"Hata: {e}")
-
-# --- TAB 2: İŞ YÖNETİMİ ---
-with tab2:
-    st.subheader("📋 İş Listesi ve Durum Yönetimi")
-    if st.button("🔄 Yenile", key="yenile_btn"): st.rerun()
-
-    try:
-        raw_data = ana_verileri_getir()
-        df = pd.DataFrame(raw_data)
-        
-        if df.empty or "Durum" not in df.columns:
-            st.info("Henüz veri yok veya başlıklar eksik.")
-        else:
-            bekleyenler = df[df["Durum"] != "Tamamlandi"]
-            if not bekleyenler.empty:
-                st.dataframe(bekleyenler[["Tarih", "Is Tanimi", "Durum"]], use_container_width=True)
-                
-                st.divider()
-                st.markdown("### 🏁 İş Bitirme Ekranı")
-                
-                secilen_is = st.selectbox("Tamamlanan İşi Seç:", bekleyenler["Is Tanimi"].tolist())
-                final_mesaj = st.checkbox("🎉 Müşteriye 'Bitti' mesajı at")
-                
-                if st.button("İşi Bitir ve Arşivle"):
+                    bulunan_numaralar = numaralari_ayikla(satir.iloc[0]["Telefon"])
+            
+            is_notu = st.text_input("İş / Görev Tanımı", placeholder="Örn: KDV Beyannamesi hazırlanacak")
+            
+            st.markdown("---")
+            col_b1, col_b2 = st.columns([3,1])
+            sms_atilsin_mi = col_b1.checkbox("📨 Mükellefe bilgilendirme mesajı gönder")
+            kaydet = st.form_submit_button("✅ Kaydet ve Sisteme İşle")
+            
+            if kaydet and is_notu:
+                try:
                     sheet = google_sheet_baglan()
-                    tum_veriler = sheet.get_all_values()
-                    satir_no = 0
-                    for i, row in enumerate(tum_veriler):
-                        if len(row) > 2 and row[2] == secilen_is:
-                            satir_no = i + 1
-                            break
+                    t_str = tarih.strftime("%d.%m.%Y")
+                    s_str = saat.strftime("%H:%M")
+                    tam_ad = f"{secilen_musteri} - {is_notu}"
                     
-                    if satir_no > 0:
-                        sheet.update_cell(satir_no, 5, "Tamamlandi")
-                        st.success("İş tamamlandı!")
-                        if final_mesaj:
-                            musteri_adi = secilen_is.split(" - ")[0]
-                            df_mus = musterileri_getir()
-                            satir = df_mus[df_mus["Ad Soyad"] == musteri_adi]
-                            if not satir.empty:
-                                nums = numaralari_ayikla(satir.iloc[0]["Telefon"])
-                                msg = f"Sayın *{musteri_adi}*,\n\nİşleminiz ({secilen_is.split(' - ')[1]}) tamamlanmıştır.\n\nTeşekkürler.\n*Mali Müşavirlik Ofisi*"
-                                for n in nums: whatsapp_gonder(n, msg)
-                        st.rerun()
-            else:
-                st.success("Bekleyen hiç işiniz kalmadı. ☕️")
+                    sheet.append_row([t_str, s_str, tam_ad, "Gonderildi", "Bekliyor"])
+                    
+                    whatsapp_gonder(GRUP_ID, f"📅 *YENİ İŞ*\n👤 {secilen_musteri}\n📌 {is_notu}\n🗓 {t_str} {s_str}")
+                    
+                    if sms_atilsin_mi and bulunan_numaralar:
+                        msg = f"Sayın *{secilen_musteri}*,\n\nİşleminiz ({is_notu}) işleme alınmıştır.\n\n*Mali Müşavirlik Ofisi*"
+                        for num in bulunan_numaralar: whatsapp_gonder(num, msg)
+                        st.success("Mükellefe mesaj iletildi.")
+                        
+                    st.success("İşlem Başarılı! Kayıt oluşturuldu.")
+                except Exception as e:
+                    st.error(f"Hata: {e}")
 
-    except Exception as e:
-        st.error(f"Hata: {e}")
-
-# --- TAB 3: MÜŞTERİ DEFTERİ (YENİ!) ---
-with tab3:
-    st.header("📒 Müşteri Özel Defteri")
+# --- 3. SAYFA: İŞ YÖNETİMİ ---
+elif secim == "✅ İş Yönetimi":
+    st.markdown("## 📋 Görev Yönetim Merkezi")
     
-    # 1. Müşteri Seçimi
-    df_musteriler = musterileri_getir()
-    if not df_musteriler.empty:
-        isim_listesi = df_musteriler["Ad Soyad"].tolist()
-        secilen_musteri_defter = st.selectbox("Dosyasını Açmak İstediğiniz Mükellef:", isim_listesi, key="defter_secim")
+    col_r1, col_r2 = st.columns([4,1])
+    if col_r2.button("🔄 Listeyi Yenile"): st.rerun()
+    
+    df = verileri_getir()
+    if not df.empty and "Durum" in df.columns:
+        bekleyenler = df[df["Durum"] != "Tamamlandi"]
         
-        st.divider()
-        
-        # 2. Geçmişi Getir
-        try:
-            raw_data = ana_verileri_getir()
-            df = pd.DataFrame(raw_data)
+        if not bekleyenler.empty:
+            # Şık Tablo Gösterimi
+            st.dataframe(
+                bekleyenler[["Tarih", "Saat", "Is Tanimi", "Durum"]],
+                use_container_width=True,
+                hide_index=True
+            )
             
-            if not df.empty and "Is Tanimi" in df.columns:
-                # Sadece seçilen müşteriye ait kayıtları filtrele
-                musteri_gecmisi = df[df["Is Tanimi"].str.contains(secilen_musteri_defter, na=False)]
+            st.write("")
+            with st.container(border=True):
+                st.subheader("🏁 İş Bitirme")
+                c1, c2 = st.columns([3,1])
                 
-                col_a, col_b = st.columns([2, 1])
+                secilen_is = c1.selectbox("Tamamlanan İşi Seçiniz:", bekleyenler["Is Tanimi"].tolist())
+                final_msg = c1.checkbox("🎉 Mükellefe 'Tamamlandı' mesajı gönder")
                 
-                with col_a:
-                    st.subheader(f"📜 {secilen_musteri_defter} - Geçmiş Hareketler")
-                    if not musteri_gecmisi.empty:
-                        # Tabloyu göster
-                        st.dataframe(musteri_gecmisi[["Tarih", "Is Tanimi", "Durum"]], use_container_width=True)
-                    else:
-                        st.info("Bu mükellef için henüz bir kayıt bulunmuyor.")
-                
-                # 3. Özel Not Ekleme Bölümü
-                with col_b:
-                    st.markdown("### 📝 Görüşme Notu Ekle")
-                    with st.form("not_formu", clear_on_submit=True):
-                        st.caption("Buraya eklenen notlar 'Tamamlandı' olarak kaydedilir ve müşteriye mesaj gitmez.")
-                        not_icerik = st.text_area("Görüşme Detayı / Not", placeholder="Örn: Banka kredisi için bilanço istedi...")
-                        not_tarih = st.date_input("Not Tarihi")
-                        
-                        not_kaydet = st.form_submit_button("💾 Notu Arşive Ekle")
-                        
-                        if not_kaydet and not_icerik:
-                            sheet = google_sheet_baglan()
-                            t_str = not_tarih.strftime("%d.%m.%Y")
-                            s_str = datetime.now().strftime("%H:%M")
-                            # Not olduğunu belli etmek için başına [NOT] ekliyoruz
-                            tam_not = f"{secilen_musteri_defter} - [NOT] {not_icerik}"
+                if c2.button("Tamamla 🏁"):
+                    sheet = google_sheet_baglan()
+                    rows = sheet.get_all_values()
+                    for i, row in enumerate(rows):
+                        if len(row) > 2 and row[2] == secilen_is:
+                            sheet.update_cell(i+1, 5, "Tamamlandi")
                             
-                            # Direkt 'Tamamlandi' olarak ekliyoruz ki iş listesini kirletmesin
-                            sheet.append_row([t_str, s_str, tam_not, "Gonderilmedi", "Tamamlandi"])
-                            st.success("Not deftere işlendi!")
+                            if final_msg:
+                                # Mesaj atma kodu (basitleştirildi)
+                                ad = secilen_is.split(" - ")[0]
+                                df_m = verileri_getir("Musteriler")
+                                satir = df_m[df_m["Ad Soyad"] == ad]
+                                if not satir.empty:
+                                    nums = numaralari_ayikla(satir.iloc[0]["Telefon"])
+                                    for n in nums: whatsapp_gonder(n, f"Sayın {ad}, işleminiz tamamlanmıştır.")
+                            
+                            st.success("İşlem tamamlandı!")
                             st.rerun()
+                            break
+        else:
+            st.success("Tebrikler! Bekleyen hiç işiniz yok.")
 
-        except Exception as e:
-            st.error(f"Defter okunurken hata: {e}")
-    else:
-        st.warning("Müşteri listesi boş.")
-
-# --- TAB 4: PATRON PANELİ ---
-with tab4:
-    st.header("📊 Ofis Performans Raporu")
+# --- 4. SAYFA: MÜŞTERİ DEFTERİ ---
+elif secim == "📒 Müşteri Defteri":
+    st.markdown("## 📂 Müşteri Arşivi")
     
-    try:
-        raw_data = ana_verileri_getir()
-        df = pd.DataFrame(raw_data)
+    df_m = verileri_getir("Musteriler")
+    if not df_m.empty:
+        musteri = st.selectbox("Mükellef Seçiniz:", df_m["Ad Soyad"].tolist())
         
-        if not df.empty and "Durum" in df.columns:
-            toplam_is = len(df)
-            biten_is = len(df[df["Durum"] == "Tamamlandi"])
-            bekleyen_is = len(df[df["Durum"] != "Tamamlandi"])
+        st.markdown("---")
+        
+        df = verileri_getir()
+        if not df.empty:
+            ozel_veri = df[df["Is Tanimi"].str.contains(musteri, na=False)]
             
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Toplam Kayıt", toplam_is)
-            c2.metric("✅ Tamamlanan/Notlar", biten_is)
-            c3.metric("⏳ Bekleyen İşler", bekleyen_is, delta_color="inverse")
+            c1, c2 = st.columns([2,1])
+            with c1:
+                st.subheader("📜 Geçmiş Hareketler")
+                st.dataframe(ozel_veri[["Tarih", "Is Tanimi", "Durum"]], use_container_width=True, hide_index=True)
             
-            st.divider()
-            st.subheader("🏆 Müşteri Yoğunluk Analizi")
-            df['Musteri_Adi'] = df['Is Tanimi'].apply(lambda x: x.split(" - ")[0] if " - " in str(x) else "Diğer")
-            st.bar_chart(df['Musteri_Adi'].value_counts())
-            
-    except Exception as e:
-        st.error(f"Analiz Hatası: {e}")
+            with c2:
+                with st.container(border=True):
+                    st.subheader("📝 Özel Not Ekle")
+                    with st.form("not_ekle"):
+                        not_txt = st.text_area("Notunuz")
+                        tarih_not = st.date_input("Tarih")
+                        if st.form_submit_button("Notu Kaydet"):
+                            sheet = google_sheet_baglan()
+                            full_not = f"{musteri} - [NOT] {not_txt}"
+                            sheet.append_row([tarih_not.strftime("%d.%m.%Y"), "-", full_not, "-", "Tamamlandi"])
+                            st.success("Not eklendi.")
+                            st.rerun()
