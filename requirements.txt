@@ -2,4 +2,4 @@ streamlit
 gspread
 oauth2client
 requests
-
+pandas
