@@ -1,8 +1,9 @@
+
 streamlit
 gspread
 oauth2client
+google-api-python-client
 requests
 pandas
-google-api-python-client
 plotly
 pdfplumber
