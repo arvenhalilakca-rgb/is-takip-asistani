@@ -13,8 +13,8 @@ import pdfplumber
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(
-    page_title="Müşavir Asistanı Smart",
-    page_icon="🧠",
+    page_title="Müşavir Asistanı Pro Max",
+    page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -34,26 +34,49 @@ st.markdown("""
         background-color: #e0f7fa; color: #006064; padding: 2px 8px; 
         border-radius: 12px; font-size: 12px; margin-right: 5px; border: 1px solid #b2ebf2;
     }
-    /* VIP İkonu */
     .vip-badge {color: #f1c40f; font-weight: bold;}
     
-    /* Tatil Uyarısı */
-    .tatil-uyari {
-        background-color: #ffebee; color: #c62828; padding: 10px; 
-        border-radius: 8px; margin-bottom: 10px; border-left: 5px solid #c62828;
+    /* Uyarılar */
+    .tatil-uyari {background-color: #ffebee; color: #c62828; padding: 10px; border-radius: 8px; border-left: 5px solid #c62828;}
+    .sahipsiz {border-left: 5px solid #ff9800; background-color: #fff3e0; padding: 10px;}
+    
+    /* Notlar */
+    .tarihli-not {
+        font-size: 13px; color: #2c3e50; 
+        background-color: #ecf0f1; padding: 8px; 
+        border-radius: 5px; margin-bottom: 5px; border-left: 3px solid #3498db;
     }
     
-    /* Sahipsiz İş */
-    .sahipsiz {border-left: 5px solid #ff9800; background-color: #fff3e0; padding: 10px; margin-bottom: 5px;}
+    /* Finans Kartları */
+    div[data-testid="stMetricValue"] {font-size: 24px; color: #2C3E50;}
     </style>
     """, unsafe_allow_html=True)
 
-# --- RESMİ TATİLLER (Örnek Liste) ---
+# --- SABİT VERİLER ---
 RESMI_TATILLER = ["01.01", "23.04", "01.05", "19.05", "15.07", "30.08", "29.10"]
+
+FIYAT_TARIFESI = {
+    "Şahıs İşletmesi": {
+        "Hizmet": {"Kurulus": 10000, "Defter": 5000},
+        "Alım-Satım": {"Kurulus": 10000, "Defter": 5000},
+        "İmalat - İnşaat": {"Kurulus": 10000, "Defter": 5000},
+        "Serbest Meslek": {"Kurulus": 10000, "Defter": 6000},
+        "Bilanço Esasına Tabii": {"Kurulus": 11250, "Defter": 10000}
+    },
+    "Limited Şirket": {
+        "Hizmet": {"Kurulus": 25000, "Defter": 12500},
+        "Alım-Satım": {"Kurulus": 25000, "Defter": 12500},
+        "İmalat - İnşaat": {"Kurulus": 25000, "Defter": 15000}
+    },
+    "Anonim Şirket": {
+        "Hizmet": {"Kurulus": 25000, "Defter": 12500},
+        "İmalat - İnşaat": {"Kurulus": 25000, "Defter": 17500}
+    }
+}
 
 # --- SESSION STATE ---
 if 'hizli_not' not in st.session_state: st.session_state['hizli_not'] = ""
-if 'son_islem_yedek' not in st.session_state: st.session_state['son_islem_yedek'] = None # Undo için
+if 'son_islem_yedek' not in st.session_state: st.session_state['son_islem_yedek'] = None
 if 'sessiz_mod' not in st.session_state: st.session_state['sessiz_mod'] = False
 
 # --- BAĞLANTILAR ---
@@ -61,7 +84,7 @@ try:
     ID_INSTANCE = st.secrets["ID_INSTANCE"]; API_TOKEN = st.secrets["API_TOKEN"]
     GRUP_ID = st.secrets["GRUP_ID"]; DRIVE_FOLDER_ID = st.secrets["DRIVE_FOLDER_ID"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
-except: st.error("⚠️ Ayar Hatası: Secrets eksik."); st.stop()
+except: st.error("⚠️ Ayar Hatası: Secrets eksik. Lütfen yapılandırmayı kontrol edin."); st.stop()
 
 def google_sheet_baglan(sayfa_adi="Sheet1"):
     client = gspread.authorize(creds)
@@ -69,10 +92,7 @@ def google_sheet_baglan(sayfa_adi="Sheet1"):
     else: return client.open("Is_Takip_Sistemi").worksheet(sayfa_adi)
 
 def whatsapp_gonder(chat_id, mesaj):
-    # Madde 23: Sessiz Mod Kontrolü
-    if st.session_state['sessiz_mod']:
-        return False # Gönderme
-    
+    if st.session_state['sessiz_mod']: return False
     if "@" not in chat_id: chat_id = f"{chat_id}@c.us"
     url = f"https://api.green-api.com/waInstance{ID_INSTANCE}/sendMessage/{API_TOKEN}"
     try: requests.post(url, json={'chatId': chat_id, 'message': mesaj}); return True
@@ -100,6 +120,17 @@ def numaralari_ayikla(tel_str):
         elif len(sadece_rakam) == 11 and sadece_rakam.startswith("0"): temiz.append("9" + sadece_rakam)
     return temiz
 
+def beyanname_analiz_et(pdf_file):
+    try:
+        text = ""
+        with pdfplumber.open(pdf_file) as pdf:
+            for page in pdf.pages: text += page.extract_text()
+        match = re.search(r"Kredi Kartı.*?(\d{1,3}(?:\.\d{3})*,\d{2})", text, re.IGNORECASE)
+        if match:
+            return float(match.group(1).replace(".", "").replace(",", ".")), text
+        return 0.0, text
+    except Exception as e: return 0.0, str(e)
+
 @st.cache_data(ttl=60)
 def verileri_getir(sayfa="Ana"):
     try: sheet = google_sheet_baglan(sayfa); return pd.DataFrame(sheet.get_all_records())
@@ -108,33 +139,25 @@ def onbellek_temizle(): verileri_getir.clear()
 
 # --- YAN MENÜ ---
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=70)
+    st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=80)
     
-    # Kullanıcı Seçimi
+    # KULLANICI SEÇİMİ
     df_m = verileri_getir("Musteriler")
     personel_listesi = ["Admin"]
     if not df_m.empty and "Sorumlu" in df_m.columns:
         personel_listesi += [p for p in df_m["Sorumlu"].unique().tolist() if str(p) not in ["nan", ""]]
-    aktif_kullanici = st.selectbox("👤 Kullanıcı:", list(set(personel_listesi)))
+    aktif_kullanici = st.selectbox("👤 Kullanıcı", list(set(personel_listesi)))
 
-    # Madde 23: Sessiz Mod Toggle
-    st.session_state['sessiz_mod'] = st.toggle("🔕 Sessiz Mod (Bildirim Yok)", value=st.session_state['sessiz_mod'])
-    if st.session_state['sessiz_mod']:
-        st.caption("⚠️ WhatsApp mesajları gönderilmeyecek.")
-
-    # Madde 21: Sihirli Arama (Basit Versiyon)
-    arama_nav = st.text_input("🔍 Hızlı Git (Ctrl+K)", placeholder="Müşteri veya İş Ara...")
+    st.session_state['sessiz_mod'] = st.toggle("🔕 Sessiz Mod", value=st.session_state['sessiz_mod'])
+    arama_nav = st.text_input("🔍 Hızlı Git (Ctrl+K)", placeholder="Müşteri Ara...")
     
     st.markdown("---")
     menu = ["📊 Genel Bakış", "➕ İş Ekle", "✅ İş Yönetimi", "📂 Müşteri Arşivi", "💰 Finans & Kâr", "🏢 Kuruluş Sihirbazı", "🧮 Defter Tasdik", "👥 Personel & Portföy"]
     secim = st.radio("MENÜ", menu)
-    st.markdown("---")
     
-    # Hızlı Not
-    st.session_state['hizli_not'] = st.text_area("📝 Notlar:", value=st.session_state['hizli_not'], height=100)
+    st.markdown("---")
+    st.session_state['hizli_not'] = st.text_area("📝 Hızlı Notlar:", value=st.session_state['hizli_not'], height=100)
 
-# --- NAVİGASYON MANTIĞI ---
-# Eğer aramaya bir şey yazıldıysa ilgili sayfayı bulmaya çalışırız (Basit Simülasyon)
 if arama_nav:
     if "ekle" in arama_nav.lower(): secim = "➕ İş Ekle"
     elif "finans" in arama_nav.lower(): secim = "💰 Finans & Kâr"
@@ -145,210 +168,260 @@ if secim == "📊 Genel Bakış":
     st.title("📊 Yönetim Kokpiti")
     df = verileri_getir("Sheet1")
     
-    # Madde 18: Hızlı İstatistikler (Badge Style)
     if not df.empty and "Durum" in df.columns:
-        bugun_biten = len(df[(df["Durum"]=="Tamamlandi") & (df["Tarih"] == datetime.now().strftime("%d.%m.%Y"))])
-        st.markdown(f"**Günlük Skor:** 🎯 {bugun_biten} İş Tamamlandı")
+        # Doğum Günü
+        if not df_m.empty and "Dogum_Tarihi" in df_m.columns:
+            bugun = datetime.now()
+            df_m["Dogum_Tarihi_Format"] = pd.to_datetime(df_m["Dogum_Tarihi"], format='%d.%m.%Y', errors='coerce')
+            bg = df_m[(df_m["Dogum_Tarihi_Format"].dt.day == bugun.day) & (df_m["Dogum_Tarihi_Format"].dt.month == bugun.month)]
+            if not bg.empty: st.success(f"🎂 İYİ Kİ DOĞDUNUZ: {', '.join(bg['Ad Soyad'].tolist())}")
 
-    if not df.empty:
         with st.container():
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Toplam İş", len(df))
             c2.metric("✅ Biten", len(df[df["Durum"]=="Tamamlandi"]))
             c3.metric("⏳ Bekleyen", len(df[df["Durum"]!="Tamamlandi"]))
             
-            # KÂR
             df_c = verileri_getir("Cari")
             if not df_c.empty:
                 df_c["Tutar"] = pd.to_numeric(df_c["Tutar"].astype(str).str.replace(",", ""), errors='coerce').fillna(0)
                 net = df_c[df_c["Islem_Turu"].str.contains("Tahsilat", na=False)]["Tutar"].sum() - df_c[df_c["Islem_Turu"].str.contains("Gider", na=False)]["Tutar"].sum()
                 c4.metric("Net Kâr", f"{net:,.0f} TL")
+            else: c4.metric("Net Kâr", "0 TL")
 
-        # Madde 29: Boşta Kalan İşler (Sahipsiz)
         if "Personel" in df.columns:
             sahipsiz = df[(df["Personel"] == "") & (df["Durum"] != "Tamamlandi")]
-            if not sahipsiz.empty:
-                st.markdown(f"<div class='sahipsiz'>⚠️ <b>Dikkat:</b> {len(sahipsiz)} adet işe personel atanmamış!</div>", unsafe_allow_html=True)
+            if not sahipsiz.empty: st.markdown(f"<div class='sahipsiz'>⚠️ {len(sahipsiz)} işe personel atanmamış!</div>", unsafe_allow_html=True)
 
         col1, col2 = st.columns(2)
         with col1: st.dataframe(df.tail(5), use_container_width=True, hide_index=True)
         with col2: st.bar_chart(df["Durum"].value_counts())
 
-# --- 2. İŞ EKLE (AKILLI ÖZELLİKLER) ---
+# --- 2. İŞ EKLE ---
 elif secim == "➕ İş Ekle":
     st.title("📝 Akıllı İş Girişi")
-    
     with st.container():
         with st.form("is_ekle"):
             c1, c2 = st.columns(2)
             tarih = c1.date_input("Tarih")
-            
-            # Madde 27: Tatil Uyarısı
-            tarih_str_kisa = tarih.strftime("%d.%m")
-            if tarih_str_kisa in RESMI_TATILLER or tarih.weekday() == 6: # 6 = Pazar
-                st.markdown(f"<div class='tatil-uyari'>⚠️ <b>Uyarı:</b> Seçtiğiniz tarih ({tarih.strftime('%d.%m.%Y')}) resmi tatil veya Pazar günüdür.</div>", unsafe_allow_html=True)
-            
+            if tarih.strftime("%d.%m") in RESMI_TATILLER or tarih.weekday() == 6:
+                st.markdown(f"<div class='tatil-uyari'>⚠️ {tarih.strftime('%d.%m.%Y')} resmi tatil veya Pazar.</div>", unsafe_allow_html=True)
             saat = c2.time_input("Saat")
             
-            # Müşteri Listesi (Madde 28: VIP Gösterimi)
-            musteri_options = []
+            # VIP Müşteri & Personel
+            mus_list = []
             if not df_m.empty:
-                # VIP Hesapla (En yüksek %20)
                 df_m["Ucret"] = pd.to_numeric(df_m["Ucret"].astype(str).str.replace(",", ""), errors='coerce').fillna(0)
                 limit = df_m["Ucret"].quantile(0.8)
-                
-                for i, row in df_m.iterrows():
-                    ad = row["Ad Soyad"]
-                    if row["Ucret"] >= limit and limit > 0: ad = f"⭐ {ad} (VIP)"
-                    musteri_options.append(ad)
+                for i, r in df_m.iterrows():
+                    ad = r["Ad Soyad"]
+                    if r["Ucret"] >= limit and limit > 0: ad = f"⭐ {ad} (VIP)"
+                    mus_list.append(ad)
             
-            mus_raw = st.selectbox("Mükellef", musteri_options)
-            mus = mus_raw.replace("⭐ ", "").replace(" (VIP)", "") # Temiz isim
+            mus_raw = st.selectbox("Mükellef", mus_list)
+            mus = mus_raw.replace("⭐ ", "").replace(" (VIP)", "")
             
-            # Madde 22 & 26: Akıllı Personel Önerisi & İş Yükü
-            # Personel listesini hazırla ve yanına iş yükünü yaz
-            personel_options_yuklu = [""]
-            varsayilan_index = 0
+            # Personel Yükü
+            p_list_yuklu = [""]
+            def_idx = 0
+            df_is = verileri_getir("Sheet1")
             
-            df_isler = verileri_getir("Sheet1")
-            
-            # Seçilen müşterinin varsayılan sorumlusunu bul
-            varsayilan_sorumlu = ""
+            sorumlu_bul = ""
             if not df_m.empty and "Sorumlu" in df_m.columns:
-                bul = df_m[df_m["Ad Soyad"] == mus]
-                if not bul.empty: varsayilan_sorumlu = bul.iloc[0]["Sorumlu"]
+                f = df_m[df_m["Ad Soyad"] == mus]
+                if not f.empty: sorumlu_bul = f.iloc[0]["Sorumlu"]
 
-            if not df_isler.empty and "Personel" in df_isler.columns and "Durum" in df_isler.columns:
-                is_yuku = df_isler[df_isler["Durum"] != "Tamamlandi"]["Personel"].value_counts()
-                
+            if not df_is.empty and "Personel" in df_is.columns:
+                yukler = df_is[df_is["Durum"] != "Tamamlandi"]["Personel"].value_counts()
                 for p in personel_listesi:
-                    yuk = is_yuku.get(p, 0)
-                    etiket = f"{p} (Aktif: {yuk})"
-                    personel_options_yuklu.append(etiket)
-                    if p == varsayilan_sorumlu: varsayilan_index = len(personel_options_yuklu) - 1
-            else:
-                 personel_options_yuklu += personel_listesi
-
-            secilen_personel_raw = st.selectbox("Sorumlu Personel", personel_options_yuklu, index=varsayilan_index, help="Otomatik olarak müşterinin sorumlusu seçilir.")
-            secilen_personel = secilen_personel_raw.split(" (")[0] if "(" in secilen_personel_raw else secilen_personel_raw
+                    if p != "Admin":
+                        etiket = f"{p} (Aktif: {yukler.get(p, 0)})"
+                        p_list_yuklu.append(etiket)
+                        if p == sorumlu_bul: def_idx = len(p_list_yuklu) - 1
             
-            # İş Tanımı
+            sec_p_raw = st.selectbox("Sorumlu", p_list_yuklu, index=def_idx)
+            sec_p = sec_p_raw.split(" (")[0] if "(" in sec_p_raw else sec_p_raw
+            
             is_tipi = st.selectbox("İş Şablonu", ["KDV Beyannamesi", "Muhtasar", "SGK Giriş", "Genel", "Diğer"])
             notu = is_tipi if is_tipi != "Diğer" else st.text_input("Açıklama")
-            
             sms = st.checkbox("SMS Gönder")
             
             if st.form_submit_button("✅ Kaydet", type="primary"):
-                # Personel sütununu da ekliyoruz (Sheet1 G Sütunu)
-                google_sheet_baglan("Sheet1").append_row([
-                    tarih.strftime("%d.%m.%Y"), saat.strftime("%H:%M"), 
-                    f"{mus} - {notu}", "Gonderildi", "Bekliyor", "-", secilen_personel
-                ])
+                google_sheet_baglan("Sheet1").append_row([tarih.strftime("%d.%m.%Y"), saat.strftime("%H:%M"), f"{mus} - {notu}", "Gonderildi", "Bekliyor", "-", sec_p])
                 onbellek_temizle()
-                whatsapp_gonder(GRUP_ID, f"🆕 *İŞ*: {mus} - {notu} ({secilen_personel})")
-                
-                if sms and not df_m.empty:
+                whatsapp_gonder(GRUP_ID, f"🆕 *İŞ*: {mus} - {notu} ({sec_p})")
+                if sms:
                     satir = df_m[df_m["Ad Soyad"] == mus]
                     if not satir.empty:
-                        nums = numaralari_ayikla(satir.iloc[0]["Telefon"])
-                        for n in nums: whatsapp_gonder(n, f"Sayın {mus}, işleminiz ({notu}) alınmıştır.")
-                
+                        for n in numaralari_ayikla(satir.iloc[0]["Telefon"]): whatsapp_gonder(n, f"Sayın {mus}, işleminiz ({notu}) alınmıştır.")
                 st.success("Kaydedildi!")
 
-# --- 3. İŞ YÖNETİMİ (GERİ AL & ETİKETLER) ---
+# --- 3. İŞ YÖNETİMİ ---
 elif secim == "✅ İş Yönetimi":
     st.title("📋 İş Takip")
     if st.button("🔄 Yenile"): onbellek_temizle(); st.rerun()
-    
     df = verileri_getir("Sheet1")
     if not df.empty:
-        # Madde 24: Etiket Filtresi
-        filtre_bana_ait = st.checkbox(f"Sadece Bana ({aktif_kullanici}) Ait Olanlar")
+        filtre = st.checkbox(f"Sadece Bana ({aktif_kullanici}) Ait Olanlar")
+        df_g = df.copy()
+        if filtre and aktif_kullanici != "Admin" and "Personel" in df_g.columns:
+            df_g = df_g[df_g["Personel"] == aktif_kullanici]
         
-        df_goster = df.copy()
-        if filtre_bana_ait and aktif_kullanici != "Admin" and "Personel" in df_goster.columns:
-            df_goster = df_goster[df_goster["Personel"] == aktif_kullanici]
+        st.dataframe(df_g[["Tarih", "Is Tanimi", "Durum", "Personel"]], use_container_width=True, hide_index=True)
         
-        # Tabloyu Göster
-        st.dataframe(df_goster[["Tarih", "Is Tanimi", "Durum", "Personel"]], use_container_width=True, hide_index=True)
-        
-        # Madde 25 & 30: İş Bitirme, Kutlama ve Geri Al
         st.markdown("---")
         with st.container():
-            col_b1, col_b2 = st.columns([3,1])
+            c1, c2 = st.columns([3,1])
+            bekleyen = df[df["Durum"] != "Tamamlandi"]["Is Tanimi"].tolist()
+            secilen = c1.selectbox("İş Seç:", bekleyen)
             
-            bekleyenler = df[df["Durum"] != "Tamamlandi"]["Is Tanimi"].tolist()
-            secilen = col_b1.selectbox("İş Bitir:", bekleyenler)
-            
-            if col_b2.button("🏁 Bitir"):
-                # Yedek Al (Undo için)
-                st.session_state['son_islem_yedek'] = secilen
-                
-                rows = google_sheet_baglan("Sheet1").get_all_values()
-                for i, r in enumerate(rows):
-                    if len(r) > 2 and r[2] == secilen:
-                        google_sheet_baglan("Sheet1").update_cell(i+1, 5, "Tamamlandi")
-                        onbellek_temizle()
-                        st.balloons() # Madde 30: Kutlama
-                        st.success("İş Tamamlandı!")
-                        time.sleep(1)
-                        st.rerun()
-                        break
-            
-            # Madde 25: Geri Al Butonu (Eğer yedek varsa göster)
+            if "AÇILIŞ" in secilen or "KURULUŞ" in secilen:
+                st.info("Kuruluş Adımları")
+                s1=st.checkbox("1. Sicil Gazetesi"); s2=st.checkbox("2. İmza Sirküleri"); s3=st.checkbox("3. E-Tebligat")
+                if st.button("Durumu Güncelle"):
+                    durum = "Sicil/İmza Bekleniyor"
+                    if s1 and s2 and s3: durum = "Tamamlandi"
+                    rows = google_sheet_baglan("Sheet1").get_all_values()
+                    for i, r in enumerate(rows):
+                        if len(r) > 2 and r[2] == secilen:
+                            google_sheet_baglan("Sheet1").update_cell(i+1, 5, durum)
+                            onbellek_temizle(); st.success("Güncellendi"); st.rerun()
+            else:
+                if c2.button("🏁 Bitir"):
+                    st.session_state['son_islem_yedek'] = secilen
+                    rows = google_sheet_baglan("Sheet1").get_all_values()
+                    for i, r in enumerate(rows):
+                        if len(r) > 2 and r[2] == secilen:
+                            google_sheet_baglan("Sheet1").update_cell(i+1, 5, "Tamamlandi")
+                            onbellek_temizle(); st.balloons(); st.success("Bitti!"); time.sleep(1); st.rerun()
+                            
             if st.session_state['son_islem_yedek']:
-                st.warning(f"Son İşlem: {st.session_state['son_islem_yedek']} tamamlandı.")
-                if st.button("↩️ İşlemi Geri Al (Yanlışlıkla Oldu)"):
+                if st.button("↩️ Geri Al"):
                     rows = google_sheet_baglan("Sheet1").get_all_values()
                     for i, r in enumerate(rows):
                         if len(r) > 2 and r[2] == st.session_state['son_islem_yedek']:
-                            google_sheet_baglan("Sheet1").update_cell(i+1, 5, "Bekliyor") # Eski haline çevir
-                            st.session_state['son_islem_yedek'] = None
-                            onbellek_temizle()
-                            st.info("İşlem geri alındı.")
-                            time.sleep(1)
-                            st.rerun()
-                            break
+                            google_sheet_baglan("Sheet1").update_cell(i+1, 5, "Bekliyor")
+                            st.session_state['son_islem_yedek'] = None; onbellek_temizle(); st.rerun()
 
-# --- 4. ARŞİV (ETİKET GÖSTERİMİ) ---
+            if c2.button("🔁 Kopyala (Gelecek Ay)"):
+                satir = df[df["Is Tanimi"] == secilen].iloc[0]
+                yeni_t = (datetime.now() + timedelta(days=30)).strftime("%d.%m.%Y")
+                google_sheet_baglan("Sheet1").append_row([yeni_t, satir["Saat"], satir["Is Tanimi"], "Gonderildi", "Bekliyor", "-", satir.get("Personel", "")])
+                onbellek_temizle(); st.success("Kopyalandı")
+
+# --- 4. ARŞİV ---
 elif secim == "📂 Müşteri Arşivi":
     st.title("📂 Arşiv")
     if not df_m.empty:
         mus = st.selectbox("Müşteri:", df_m["Ad Soyad"].tolist())
         bilgi = df_m[df_m["Ad Soyad"] == mus].iloc[0]
         
-        # Madde 24: Etiketleri Göster
         if "Etiket" in df_m.columns and str(bilgi["Etiket"]) != "nan":
             etiketler = str(bilgi["Etiket"]).split(",")
-            html_etiket = "".join([f"<span class='etiket'>#{e.strip()}</span>" for e in etiketler])
-            st.markdown(html_etiket, unsafe_allow_html=True)
+            st.markdown("".join([f"<span class='etiket'>#{e.strip()}</span>" for e in etiketler]), unsafe_allow_html=True)
             
+        c1, c2, c3 = st.columns(3)
+        c1.code(bilgi.get("Telefon", "-"), language="text")
+        c2.code(bilgi.get("TC", "-"), language="text")
+        c3.code(f"{bilgi.get('Ucret', '-')} TL", language="text")
+        
+        st.subheader("📝 Tarihçe")
+        df_not = verileri_getir("Sheet1")
+        if not df_not.empty:
+            m_not = df_not[(df_not["Is Tanimi"].str.contains(mus, na=False)) & (df_not["Is Tanimi"].str.contains("NOT", na=False))]
+            for i, r in m_not.iterrows():
+                raw = r['Is Tanimi'].split("NOT]")[-1] if "NOT]" in r['Is Tanimi'] else r['Is Tanimi']
+                st.markdown(f"<div class='tarihli-not'><b>📅 {r['Tarih']}</b>: {raw} <br><i>Dosya: {r.get('Dosya', '-')}</i></div>", unsafe_allow_html=True)
+        
         with st.form("up"):
+            txt = st.text_area("Not / Açıklama")
             d = st.file_uploader("Dosya"); tur = st.selectbox("Tür", ["Fatura", "Diğer"])
-            if st.form_submit_button("Yükle"):
+            if st.form_submit_button("Kaydet/Yükle"):
                 l = drive_yukle(d, mus, tur) if d else "-"
-                google_sheet_baglan("Sheet1").append_row([datetime.now().strftime("%d.%m.%Y"), "-", f"{mus} - [{tur}]", "-", "Tamamlandi", l, aktif_kullanici])
-                st.success("Yüklendi")
+                msg = f"[{datetime.now().strftime('%H:%M')} - {aktif_kullanici}]: {txt}"
+                google_sheet_baglan("Sheet1").append_row([datetime.now().strftime("%d.%m.%Y"), "-", f"{mus} - [NOT] {msg} - [{tur}]", "-", "Tamamlandi", l, aktif_kullanici])
+                st.success("Kaydedildi"); st.rerun()
 
-# --- DİĞERLERİ ---
+# --- 5. FİNANS ---
 elif secim == "💰 Finans & Kâr":
     st.title("💰 Finans")
     df_c = verileri_getir("Cari")
-    if not df_c.empty:
-        df_c["Tutar"] = pd.to_numeric(df_c["Tutar"].astype(str).str.replace(",", ""), errors='coerce').fillna(0)
-        net = df_c[df_c["Islem_Turu"].str.contains("Tahsilat", na=False)]["Tutar"].sum() - df_c[df_c["Islem_Turu"].str.contains("Gider", na=False)]["Tutar"].sum()
-        st.metric("Net Kâr", f"{net:,.0f} TL")
-        st.dataframe(df_c)
+    t1, t2, t3, t4 = st.tabs(["📊 Analiz", "💸 Ekle", "📄 OCR", "🔄 Tahakkuk"])
+    
+    with t1:
+        if not df_c.empty:
+            df_c["Tutar"] = pd.to_numeric(df_c["Tutar"].astype(str).str.replace(",", ""), errors='coerce').fillna(0)
+            top_t = df_c[df_c["Islem_Turu"].str.contains("Tahsilat", na=False)]["Tutar"].sum()
+            top_g = df_c[df_c["Islem_Turu"].str.contains("Gider", na=False)]["Tutar"].sum()
+            net = top_t - top_g
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Tahsilat", f"{top_t:,.0f} TL"); c2.metric("Gider", f"{top_g:,.0f} TL"); c3.metric("Kâr", f"{net:,.0f} TL")
+            st.dataframe(df_c, use_container_width=True)
+        else: st.info("Veri yok.")
+        
+    with t2:
+        with st.form("fin_ekle"):
+            trh = st.date_input("Tarih"); tur = st.radio("Tür", ["Hizmet Bedeli (Borç)", "Tahsilat", "🔴 OFİS GİDERİ"])
+            muh = "OFİS GİDERİ" if "GİDER" in tur else st.selectbox("Müşteri", df_m["Ad Soyad"].tolist() if not df_m.empty else [])
+            tut = st.number_input("Tutar"); ack = st.text_input("Açıklama")
+            if st.form_submit_button("Kaydet"):
+                google_sheet_baglan("Cari").append_row([trh.strftime("%d.%m.%Y"), muh, tur, tut, ack])
+                onbellek_temizle(); st.success("Kaydedildi"); st.rerun()
 
+    with t3:
+        up = st.file_uploader("KDV PDF", type="pdf")
+        if up:
+            val, txt = beyanname_analiz_et(up)
+            if val > 0:
+                st.success(f"POS Tutarı: {val:,.2f} TL")
+                if st.button("Kaydet"):
+                    google_sheet_baglan("Cari").append_row([datetime.now().strftime("%d.%m.%Y"), "OCR", "POS Bilgi", val, "KDV Okuma"])
+                    st.success("Eklendi")
+            else: st.error("Okunamadı")
+
+    with t4:
+        mus_t = st.selectbox("Müşteri Seç", df_m["Ad Soyad"].tolist() if not df_m.empty else [])
+        tutar_t = st.number_input("Aylık Tutar")
+        if st.button("12 Aylık İşle"):
+             rows=[[f"15.{i+1:02d}.2025", mus_t, "Hizmet Bedeli (Borç)", tutar_t, "Yıllık"] for i in range(12)]
+             google_sheet_baglan("Cari").append_rows(rows); onbellek_temizle(); st.success("İşlendi")
+
+# --- 6. KURULUŞ ---
 elif secim == "🏢 Kuruluş Sihirbazı":
-    st.title("🏢 Kuruluş"); a=st.text_input("Aday"); t=st.selectbox("Tür", ["Ltd", "Şahıs"])
-    if st.button("Teklif"): st.success("Hesaplandı")
+    st.title("🏢 Kuruluş (2026 Tarife)")
+    with st.form("kur"):
+        aday = st.text_input("Aday")
+        sturu = st.radio("Tür", ["Şahıs İşletmesi", "Limited Şirket", "Anonim Şirket"], horizontal=True)
+        sektor = st.selectbox("Sektör", ["Hizmet", "Alım-Satım", "İmalat - İnşaat", "Yabancı Ortaklı"])
+        
+        fiyat = {"Kurulus": 0, "Defter": 0}
+        if sturu in FIYAT_TARIFESI:
+            fiyat = FIYAT_TARIFESI[sturu].get(sektor, FIYAT_TARIFESI[sturu].get("Hizmet", {"Kurulus":0, "Defter":0}))
+        
+        st.info(f"Tarife: {fiyat['Kurulus']:,.0f} TL Kuruluş | {fiyat['Defter']:,.0f} TL Defter")
+        
+        c1, c2 = st.columns(2)
+        son_kur = c1.number_input("Kuruluş (Teklif)", value=float(fiyat["Kurulus"]))
+        son_def = c2.number_input("Aylık (Teklif)", value=float(fiyat["Defter"]))
+        
+        if st.form_submit_button("Teklif Kaydet"):
+            baslik = f"{aday} - [AÇILIŞ] Şirket Kuruluşu"
+            google_sheet_baglan("Sheet1").append_row([datetime.now().strftime("%d.%m.%Y"), "-", baslik, "-", "Bekliyor", "-", aktif_kullanici])
+            st.success("İşlem Başlatıldı (İş Yönetimine Düştü)")
 
+# --- 7. TASDİK ---
 elif secim == "🧮 Defter Tasdik":
-    st.title("🧮 Tasdik"); s=st.number_input("Sayfa"); st.metric("Tutar", s*6+300)
+    st.title("🧮 Tasdik Hesapla")
+    c1,c2=st.columns(2); s=c1.number_input("Sayfa Sayısı", 100); h=c2.number_input("Hizmet Bedeli", 3500)
+    noter = (s*6.0)+300
+    st.metric("Müşteriden İstenecek", f"{noter+h:,.2f} TL", delta=f"Noter Masrafı: {noter} TL")
 
+# --- 8. PERSONEL ---
 elif secim == "👥 Personel & Portföy":
-    st.title("👥 Analiz"); st.info("Sorumlu Analizi Burada")
+    st.title("👥 Analiz")
     if not df_m.empty and "Sorumlu" in df_m.columns:
         df_m["Ucret"] = pd.to_numeric(df_m["Ucret"].astype(str).str.replace(",", ""), errors='coerce').fillna(0)
-        st.bar_chart(df_m.groupby("Sorumlu")["Ucret"].sum())
+        ozet = df_m.groupby("Sorumlu")["Ucret"].sum().reset_index().sort_values("Ucret", ascending=False)
+        c1, c2 = st.columns(2)
+        c1.dataframe(ozet, use_container_width=True)
+        c2.plotly_chart(px.pie(ozet, values="Ucret", names="Sorumlu", hole=0.4))
