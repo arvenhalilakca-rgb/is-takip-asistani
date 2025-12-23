@@ -11,11 +11,16 @@ def run_automation():
 
     # --- Google Secrets ---
     # GitHub Actions'da secrets'ı environment variable olarak alacağız
-    keyfile_dict_str = os.environ.get("GCP_SA_KEY")
-    if not keyfile_dict_str:
-        print("Hata: GCP_SA_KEY environment variable bulunamadı.")
-        return
-    keyfile_dict = json.loads(keyfile_dict_str)
+   # --- Google Secrets (GEÇİCİ TEST YÖNTEMİ) ---
+keyfile_dict_str = """
+BURAYA { İLE BAŞLAYIP } İLE BİTEN UZUN SIRRINIZI YAPIŞTIRIN
+"""
+
+if not keyfile_dict_str.strip():
+    print("Hata: Sır metni boş!")
+    return
+keyfile_dict = json.loads(keyfile_dict_str)
+
 
     # --- Google Sheets Bağlantısı ---
     try:
