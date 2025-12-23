@@ -12,8 +12,8 @@ import plotly.express as px
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(
-    page_title="Müşavir Asistanı Dev",
-    page_icon="🚀",
+    page_title="Müşavir Asistanı Pro",
+    page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -28,15 +28,7 @@ st.markdown("""
     div.stContainer {background-color: #FFFFFF; padding: 20px; border-radius: 12px; border: 1px solid #E0E0E0; box-shadow: 0 4px 6px rgba(0,0,0,0.05);}
     .stButton>button {width: 100%; border-radius: 8px; font-weight: 600;}
     button[kind="primary"] {background: linear-gradient(90deg, #2980b9 0%, #2c3e50 100%); color: white;}
-    .dogum-gunu-kutu {
-        padding: 15px; background-color: #d4edda; color: #155724; 
-        border-radius: 10px; border-left: 5px solid #28a745; margin-bottom: 20px;
-        font-size: 16px; font-weight: bold;
-    }
-    .gecikmis-kutu {
-        padding: 15px; background-color: #ffebee; color: #c0392b; 
-        border-radius: 8px; border-left: 5px solid #c0392b; margin-bottom: 20px;
-    }
+    .takip-kutu {background-color: #e8f4f8; padding: 15px; border-radius: 10px; border-left: 5px solid #3498db; margin-top:10px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -124,42 +116,19 @@ with st.sidebar:
         ]
         if not bugun_doganlar_df.empty:
             bugun_doganlar = bugun_doganlar_df["Ad Soyad"].tolist()
-            st.warning(f"🎂 BUGÜN {len(bugun_doganlar)} DOĞUM GÜNÜ VAR!")
-            for k in bugun_doganlar: st.caption(f"🎉 {k}")
+            st.warning(f"🎂 BUGÜN {len(bugun_doganlar)} DOĞUM GÜNÜ!")
 
-    # TAM MENÜ (Girişsiz, Herkes Her Şeyi Görür)
-    menu = [
-        "📊 Genel Bakış", 
-        "➕ İş Ekle", 
-        "✅ İş Yönetimi", 
-        "📂 Müşteri Arşivi",
-        "💰 Finans & Kâr",
-        "🏢 Kuruluş Sihirbazı",
-        "🧮 Defter Tasdik",
-        "👥 Personel & Portföy"
-    ]
+    menu = ["📊 Genel Bakış", "➕ İş Ekle", "✅ İş Yönetimi", "📂 Müşteri Arşivi", "🏢 Kuruluş Sihirbazı", "💰 Finans & Kâr", "🧮 Defter Tasdik", "👥 Personel & Portföy"]
     secim = st.radio("MENÜ", menu)
     st.markdown("---")
-    st.caption("Geliştirici Modu (Açık Erişim)")
+    st.caption("Kontrollü Yönetim Modu 🛡️")
 
 # --- 1. DASHBOARD ---
 if secim == "📊 Genel Bakış":
     st.title("📊 Ofis Kokpiti")
-    
-    # Doğum Günü Kutusu
     if bugun_doganlar:
-        st.markdown(f"""<div class="dogum-gunu-kutu">🎉 İYİ Kİ DOĞDUNUZ! Bugün <b>{', '.join(bugun_doganlar)}</b> doğum günü.</div>""", unsafe_allow_html=True)
-        st.balloons()
-        c_dg1, c_dg2 = st.columns([3,1])
-        kisi = c_dg1.selectbox("Kutla:", bugun_doganlar)
-        if c_dg2.button("🎁 Mesaj At", type="primary"):
-            satir = df_m[df_m["Ad Soyad"] == kisi]
-            if not satir.empty:
-                nums = numaralari_ayikla(satir.iloc[0]["Telefon"])
-                msg = f"Sayın *{kisi}*,\n\nDoğum gününüzü kutlar, sağlıklı ve başarılı bir yaş dileriz. 🎂\n\n*Mali Müşavirlik Ofisiniz*"
-                for n in nums: whatsapp_gonder(n, msg)
-                st.success("Kutlandı!")
-
+        st.info(f"🎉 Bugün Doğum Günü Olanlar: {', '.join(bugun_doganlar)}")
+        
     df = verileri_getir("Sheet1")
     if not df.empty and "Durum" in df.columns:
         with st.container():
@@ -168,17 +137,14 @@ if secim == "📊 Genel Bakış":
             c2.metric("✅ Biten", len(df[df["Durum"]=="Tamamlandi"]))
             c3.metric("⏳ Bekleyen", len(df[df["Durum"]!="Tamamlandi"]))
             
-            # KÂR METRİĞİ (Artık herkese açık)
             df_c = verileri_getir("Cari")
             if not df_c.empty:
                 df_c["Tutar"] = pd.to_numeric(df_c["Tutar"].astype(str).str.replace(",", ""), errors='coerce').fillna(0)
                 net = df_c[df_c["Islem_Turu"].str.contains("Tahsilat", na=False)]["Tutar"].sum() - df_c[df_c["Islem_Turu"].str.contains("Gider", na=False)]["Tutar"].sum()
                 c4.metric("Net Kâr", f"{net:,.0f} TL", delta_color="normal" if net>0 else "inverse")
-            else:
-                c4.metric("Net Kâr", "0 TL")
 
         col1, col2 = st.columns(2)
-        with col1: st.dataframe(df.tail(5), use_container_width=True, hide_index=True)
+        with col1: st.dataframe(df[["Tarih", "Is Tanimi", "Durum"]].tail(5), use_container_width=True, hide_index=True)
         with col2: st.bar_chart(df["Durum"].value_counts())
 
 # --- 2. İŞ EKLE ---
@@ -193,27 +159,73 @@ elif secim == "➕ İş Ekle":
             google_sheet_baglan("Sheet1").append_row([t.strftime("%d.%m.%Y"), s.strftime("%H:%M"), f"{mus} - {notu}", "Gonderildi", "Bekliyor", "-"])
             onbellek_temizle(); whatsapp_gonder(GRUP_ID, f"🆕 *İŞ*: {mus} - {notu}"); st.success("Kaydedildi!")
 
-# --- 3. İŞ YÖNETİMİ ---
+# --- 3. İŞ YÖNETİMİ (GELİŞMİŞ KURULUŞ TAKİP) ---
 elif secim == "✅ İş Yönetimi":
-    st.title("📋 Görev Takip")
+    st.title("📋 İş ve Süreç Takibi")
     if st.button("🔄 Yenile"): onbellek_temizle(); st.rerun()
+    
     df = verileri_getir("Sheet1")
     if not df.empty:
-        bekleyen = df[df["Durum"]!="Tamamlandi"].copy()
-        bugun = datetime.now()
-        bekleyen['Tarih_Format'] = pd.to_datetime(bekleyen['Tarih'], format='%d.%m.%Y', errors='coerce')
-        gec = bekleyen[bekleyen['Tarih_Format'] < bugun]
-        if not gec.empty: st.markdown(f"""<div class="gecikmis-kutu">🚨 <b>{len(gec)}</b> gecikmiş iş var!</div>""", unsafe_allow_html=True)
-        if not bekleyen.empty:
-            st.dataframe(bekleyen[["Tarih", "Is Tanimi", "Durum"]], use_container_width=True)
-            with st.form("bitir"):
-                sec = st.selectbox("Biten:", bekleyen["Is Tanimi"].tolist())
-                if st.form_submit_button("Kapat"):
+        bekleyen = df[df["Durum"]!="Tamamlandi"]
+        
+        # İş Seçimi
+        secilen_is = st.selectbox("İşlem Yapılacak Dosyayı Seç:", bekleyen["Is Tanimi"].tolist() if not bekleyen.empty else [])
+        
+        if secilen_is:
+            st.markdown("---")
+            # Eğer seçilen iş bir "KURULUŞ" veya "AÇILIŞ" işiyse, ÖZEL MENÜYÜ AÇ
+            if "AÇILIŞ" in secilen_is.upper() or "KURULUŞ" in secilen_is.upper():
+                st.subheader(f"🏗️ Kuruluş Takip Adımları: {secilen_is}")
+                
+                with st.container():
+                    st.markdown("""<div class="takip-kutu">Aşağıdaki adımları tamamladıkça işaretleyin.</div>""", unsafe_allow_html=True)
+                    
+                    c_takip1, c_takip2 = st.columns(2)
+                    step1 = c_takip1.checkbox("1. Ticaret Sicil Gazetesi Çıktı mı?")
+                    step2 = c_takip1.checkbox("2. İmza Sirküleri Alındı mı?")
+                    step3 = c_takip1.checkbox("3. Gerçek Faydalanıcı Bildirimi?")
+                    
+                    step4 = c_takip2.checkbox("4. E-Tebligat (IVD/Elden) Hazır mı?")
+                    step5 = c_takip2.checkbox("5. Banka Hesabı Açıldı mı?")
+                    step6 = c_takip2.checkbox("6. ÖKC (Yazar Kasa) Analizi Bitti mi?")
+                    
+                    st.divider()
+                    
+                    if st.button("💾 Aşamaları Kaydet / Durumu Güncelle", type="primary"):
+                        # Hangi aşamada olduğunu bul
+                        durum_mesaji = "Bekliyor"
+                        if step6: durum_mesaji = "ÖKC Analizinde"
+                        if step5: durum_mesaji = "Banka Aşamasında"
+                        if step4: durum_mesaji = "E-Tebligat Bekliyor"
+                        if step3: durum_mesaji = "Faydalanıcı Bildiriminde"
+                        if step2: durum_mesaji = "İmza Sirküsü Alındı"
+                        if step1: durum_mesaji = "Sicil Gazetesi Çıktı"
+                        if step1 and step2 and step3 and step4 and step5 and step6: durum_mesaji = "Tamamlandi"
+
+                        # Sheet'i Güncelle
+                        rows = google_sheet_baglan("Sheet1").get_all_values()
+                        for i, r in enumerate(rows):
+                            if len(r)>2 and r[2]==secilen_is:
+                                google_sheet_baglan("Sheet1").update_cell(i+1, 5, durum_mesaji)
+                                onbellek_temizle()
+                                st.success(f"İş durumu güncellendi: {durum_mesaji}")
+                                time.sleep(1)
+                                st.rerun()
+                                break
+            
+            else:
+                # Standart İş Bitirme Ekranı
+                st.info("Bu standart bir görevdir. İşlem tamamlandıysa kapatabilirsiniz.")
+                if st.button("İşi Kapat (Tamamlandı) 🏁"):
                     rows = google_sheet_baglan("Sheet1").get_all_values()
                     for i, r in enumerate(rows):
-                        if len(r)>2 and r[2]==sec:
-                            google_sheet_baglan("Sheet1").update_cell(i+1, 5, "Tamamlandi"); onbellek_temizle(); st.rerun()
-        else: st.info("Bekleyen iş yok.")
+                        if len(r)>2 and r[2]==secilen_is:
+                            google_sheet_baglan("Sheet1").update_cell(i+1, 5, "Tamamlandi")
+                            onbellek_temizle()
+                            st.success("İş kapatıldı!")
+                            st.rerun()
+        else:
+            st.info("Bekleyen iş yok.")
 
 # --- 4. ARŞİV ---
 elif secim == "📂 Müşteri Arşivi":
@@ -251,14 +263,52 @@ elif secim == "💰 Finans & Kâr":
                  rows=[[f"15.{i+1:02d}.2025", ymus, "Hizmet Bedeli (Borç)", ytut, "Yıllık"] for i in range(12)]
                  google_sheet_baglan("Cari").append_rows(rows); onbellek_temizle(); st.success("İşlendi!")
 
-# --- 6. KURULUŞ ---
+# --- 6. KURULUŞ SİHİRBAZI (REVİZE EDİLDİ: ONAYLI SİSTEM) ---
 elif secim == "🏢 Kuruluş Sihirbazı":
-    st.title("🏢 Kuruluş & Teklif (2026 Tarife)")
-    with st.form("kur"):
-        aday=st.text_input("Aday"); tur=st.selectbox("Tür", list(FIYAT_TARIFESI.keys()))
-        if st.form_submit_button("Teklif Ver"):
-            f=FIYAT_TARIFESI[tur]["Hizmet"]; st.success(f"Öneri: {f['Kurulus']} TL Kuruluş | {f['Defter']} TL Aylık")
-            google_sheet_baglan("Sheet1").append_row([datetime.now().strftime("%d.%m.%Y"), "-", f"{aday} - [AÇILIŞ]", "-", "Tamamlandi", "-"])
+    st.title("🏢 Kuruluş & Teklif Hazırlama")
+    st.info("ℹ️ Fiyatlar Çanakkale 2026 Tarifesinden çekilir. Müşteriye otomatik mesaj GİTMEZ.")
+
+    with st.container():
+        c1, c2 = st.columns(2); aday = c1.text_input("Görüşülen Kişi"); tel = c2.text_input("Telefon")
+    
+    if aday:
+        with st.form("kurulus"):
+            # TÜR VE SEKTÖR SEÇİMİ
+            with st.expander("1. Şirket Yapısı", expanded=True):
+                sirket_turu = st.radio("Şirket Türü", ["Şahıs İşletmesi", "Limited Şirket", "Anonim Şirket"], horizontal=True)
+                sektorler = ["Hizmet", "Alım-Satım", "İmalat - İnşaat", "Yabancı Ortaklı", "Serbest Meslek", "Eczane", "Bilanço Esasına Tabii"]
+                secilen_sektor = st.selectbox("Faaliyet Alanı", sektorler)
+                
+                # FİYAT ÇEKME
+                onerilen_kurulus = 0; onerilen_defter = 0
+                if sirket_turu in FIYAT_TARIFESI:
+                    if secilen_sektor in FIYAT_TARIFESI[sirket_turu]:
+                        fiyatlar = FIYAT_TARIFESI[sirket_turu][secilen_sektor]
+                        onerilen_kurulus = fiyatlar["Kurulus"]; onerilen_defter = fiyatlar["Defter"]
+                    else:
+                        onerilen_kurulus = FIYAT_TARIFESI[sirket_turu]["Hizmet"]["Kurulus"]; onerilen_defter = FIYAT_TARIFESI[sirket_turu]["Hizmet"]["Defter"]
+                
+                st.success(f"🏷️ TARİFE: Kuruluş {onerilen_kurulus:,.0f} TL | Aylık {onerilen_defter:,.0f} TL")
+
+            # TEKLİF DÜZENLEME (PATRON ONAYI)
+            with st.expander("2. Teklif Detayı (Patron Onayı)", expanded=True):
+                st.warning("Buradaki rakamlar nihai teklif olacaktır. Değişiklik yapabilirsiniz.")
+                c_f1, c_f2 = st.columns(2)
+                ucret_aylik = c_f1.number_input("Aylık Muhasebe Ücreti (TL)", value=float(onerilen_defter), step=500.0)
+                ucret_kurulus = c_f2.number_input("Kuruluş Hizmet Bedeli (TL)", value=float(onerilen_kurulus), step=500.0)
+
+            # KAYDET BUTONU (WHATSAPP YOK)
+            if st.form_submit_button("✅ Teklifi Kaydet ve Dosyayı Aç", type="primary"):
+                # Mesajı hazırlıyoruz ama göndermiyoruz, sadece rapora yazıyoruz
+                rapor = f"GÖRÜŞME: {aday}\nTeklif: Aylık {ucret_aylik} TL / Kuruluş {ucret_kurulus} TL"
+                
+                # İŞ LİSTESİNE KAYIT (BAŞLIKTA 'AÇILIŞ' GEÇMELİ Kİ TAKİP AÇILSIN)
+                is_basligi = f"{aday} - [AÇILIŞ] Şirket Kuruluşu"
+                google_sheet_baglan("Sheet1").append_row([datetime.now().strftime("%d.%m.%Y"), "-", is_basligi, "-", "Bekliyor", "-"])
+                
+                onbellek_temizle()
+                st.success("Teklif kaydedildi! İş Yönetimi menüsünden süreci takip edebilirsiniz.")
+                st.info("Müşteriye henüz mesaj gitmedi. Rakamı 'İş Yönetimi'nden kontrol edebilirsiniz.")
 
 # --- 7. TASDİK ---
 elif secim == "🧮 Defter Tasdik":
@@ -278,4 +328,3 @@ elif secim == "👥 Personel & Portföy":
         c1, c2 = st.columns([2,1])
         with c1: st.dataframe(ozet, use_container_width=True)
         with c2: fig=px.pie(ozet, values='Ciro', names='Sorumlu', hole=0.4); st.plotly_chart(fig, use_container_width=True)
-    else: st.error("Musteriler sayfasına 'Sorumlu' ve 'Ucret' sütunlarını ekleyiniz.")
