@@ -1,4 +1,4 @@
-# scheduler.py (Versiyon 3: Akıllı Teşhis Modu)
+# scheduler.py (Versiyon 4: Aşırı Detaylı Konuşma Modu)
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -7,17 +7,15 @@ import os
 import json
 import requests
 
-# === TEŞHİS RAPORU İÇİN YARDIMCI FONKSİYON ===
 def print_report(status, message):
-    """Loglara daha okunaklı raporlar yazdırmak için kullanılır."""
     print(f"[{status}] {message}")
 
-# === WHATSAPP GÖNDERME FONKSİYONU ===
 def send_whatsapp(chat_id, message, secrets):
+    # ... (Bu fonksiyon aynı, değişiklik yok) ...
     ID_INSTANCE = secrets.get("GREEN_API_ID_INSTANCE")
     API_TOKEN = secrets.get("GREEN_API_TOKEN")
     if not all([ID_INSTANCE, API_TOKEN, chat_id]):
-        print_report("UYARI", f"WhatsApp bilgileri eksik, mesaj gönderilemedi: {message}")
+        print_report("UYARI", f"WhatsApp bilgileri eksik, mesaj gönderilemedi.")
         return False
     if "@" not in str(chat_id): chat_id = f"{chat_id}@c.us"
     url = f"https://api.green-api.com/waInstance{ID_INSTANCE}/sendMessage/{API_TOKEN}"
@@ -34,33 +32,20 @@ def send_whatsapp(chat_id, message, secrets):
         print_report("HATA", f"WhatsApp'a bağlanırken ağ hatası: {e}")
         return False
 
-# === ANA OTOMASYON FONKSİYONU ===
 def run_automation():
-    print("="*40)
-    print(f"Otomasyon Başlatıldı: {datetime.now()}")
-    print("="*40)
-    print_report("BİLGİ", "Teşhis Raporu Başlatılıyor...")
+    print("="*50)
+    print(f"Otomasyon Başlatıldı (Aşırı Detaylı Mod): {datetime.now()}")
+    print("="*50)
 
-    # --- Adım 1: Tüm Sırları Oku ve Kontrol Et ---
+    # --- Adım 1: Sırları Oku ---
     secrets = {
         "GCP_SA_KEY": os.environ.get("GCP_SA_KEY"),
         "GREEN_API_ID_INSTANCE": os.environ.get("GREEN_API_ID_INSTANCE"),
         "GREEN_API_TOKEN": os.environ.get("GREEN_API_TOKEN"),
         "WHATSAPP_GRUP_ID": os.environ.get("WHATSAPP_GRUP_ID")
     }
+    if not secrets["GCP_SA_KEY"]: print_report("HATA", "GCP_SA_KEY sırrı bulunamadı."); return
     
-    if secrets["GCP_SA_KEY"]: print_report("OK", "GCP_SA_KEY sırrı başarıyla okundu.")
-    else: print_report("HATA", "GCP_SA_KEY sırrı bulunamadı veya boş. Lütfen GitHub Secrets'ı kontrol edin."); return
-
-    if secrets["GREEN_API_ID_INSTANCE"]: print_report("OK", "GREEN_API_ID_INSTANCE sırrı okundu.")
-    else: print_report("UYARI", "GREEN_API_ID_INSTANCE sırrı eksik. Mesaj gönderilemeyebilir.")
-
-    if secrets["GREEN_API_TOKEN"]: print_report("OK", "GREEN_API_TOKEN sırrı okundu.")
-    else: print_report("UYARI", "GREEN_API_TOKEN sırrı eksik. Mesaj gönderilemeyebilir.")
-
-    if secrets["WHATSAPP_GRUP_ID"]: print_report("OK", f"WHATSAPP_GRUP_ID okundu. Değer: {secrets['WHATSAPP_GRUP_ID']}")
-    else: print_report("UYARI", "WHATSAPP_GRUP_ID sırrı eksik. Grup mesajları gönderilemeyebilir.")
-
     # --- Adım 2: Google Sheets'e Bağlan ---
     try:
         keyfile_dict = json.loads(secrets["GCP_SA_KEY"])
@@ -68,71 +53,96 @@ def run_automation():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(keyfile_dict, scope )
         client = gspread.authorize(creds)
         is_takip_sistemi = client.open("Is_Takip_Sistemi")
-        print_report("OK", "Google Sheets'e başarıyla bağlanıldı ve 'Is_Takip_Sistemi' dosyası açıldı.")
-        
         isler_sheet = is_takip_sistemi.worksheet("Sheet1")
         personel_sheet = is_takip_sistemi.worksheet("Personel")
-        
         mevcut_isler = isler_sheet.get_all_records()
         personel_data = personel_sheet.get_all_records()
-        print_report("OK", "'Sheet1' ve 'Personel' sayfalarındaki veriler başarıyla okundu.")
-    except json.JSONDecodeError:
-        print_report("HATA", "GCP_SA_KEY sırrının formatı bozuk. Geçerli bir JSON değil."); return
-    except gspread.exceptions.WorksheetNotFound as e:
-        print_report("HATA", f"Google Sheet'te sayfa bulunamadı: {e}. Lütfen sayfa adlarını kontrol edin ('Sheet1', 'Personel')."); return
+        print_report("OK", "Tüm Google Sheets verileri başarıyla okundu.")
     except Exception as e:
-        print_report("HATA", f"Google Sheets'e bağlanırken beklenmedik bir sorun oluştu: {e}"); return
+        print_report("HATA", f"Google Sheets'e bağlanırken kritik hata: {e}"); return
 
-    # --- Adım 3: Proaktif Uyarı Sistemi ---
-    print("\n" + "-"*40)
-    print_report("BİLGİ", "Proaktif Uyarı Sistemi çalıştırılıyor...")
+    # --- Adım 3: Proaktif Uyarı Sistemi (Detaylı Konuşma Modu) ---
+    print("\n" + "-"*50)
+    print_report("BİLGİ", "Proaktif Uyarı Sistemi Başlatılıyor...")
     bugun = datetime.now().date()
-    personel_telefonlari = {p.get('Personel_Adi'): p.get('Telefon') for p in personel_data}
+    print_report("BİLGİ", f"Bugünün tarihi: {bugun.strftime('%d.%m.%Y')}")
+    
+    personel_telefonlari = {str(p.get('Personel_Adi')).strip(): str(p.get('Telefon')).strip() for p in personel_data}
+    print_report("BİLGİ", f"Telefon rehberi oluşturuldu: {personel_telefonlari}")
+    
     GRUP_ID = secrets.get("WHATSAPP_GRUP_ID")
     uyari_gonderilecek_is_sayisi = 0
 
-    for is_kaydi in mevcut_isler:
-        if is_kaydi.get("Durum") == "Tamamlandi": continue
-        son_tarih_str = is_kaydi.get("Son_Teslim_Tarihi")
-        if not son_tarih_str: continue
-        
+    if not mevcut_isler:
+        print_report("UYARI", "'Sheet1' sayfasında hiç görev bulunamadı."); return
+
+    for i, is_kaydi in enumerate(mevcut_isler):
+        print("\n" + f"--- Görev {i+1} Kontrol Ediliyor ---")
+        is_tanimi = is_kaydi.get("Is Tanimi", "İsimsiz Görev")
+        print_report("GÖREV", f"'{is_tanimi}'")
+
+        # 1. Kontrol: Görev tamamlanmış mı?
+        durum = str(is_kaydi.get("Durum", "")).strip()
+        if durum.lower() == "tamamlandi":
+            print_report("ATLANDI", "Görevin durumu 'Tamamlandi'.")
+            continue
+        print_report("OK", f"Görevin durumu: '{durum}' (Devam ediyor).")
+
+        # 2. Kontrol: Son teslim tarihi var mı?
+        son_tarih_str = str(is_kaydi.get("Son_Teslim_Tarihi", "")).strip()
+        if not son_tarih_str:
+            print_report("ATLANDI", "Görevin son teslim tarihi belirtilmemiş.")
+            continue
+        print_report("OK", f"Görevin son teslim tarihi: '{son_tarih_str}'.")
+
+        # 3. Kontrol: Tarih formatı doğru mu?
         try:
             son_tarih = datetime.strptime(son_tarih_str, "%d.%m.%Y").date()
-            kalan_gun = (son_tarih - bugun).days
-            is_tanimi = is_kaydi.get("Is Tanimi", "İsimsiz Görev")
-            sorumlu = is_kaydi.get("Personel")
-            
-            mesaj, hedef_tel = "", None
+        except (ValueError, TypeError):
+            print_report("UYARI", "Tarih formatı anlaşılamadı (GG.AA.YYYY olmalı). Atlanıyor.")
+            continue
+        
+        # 4. Kontrol: Uyarı göndermeye değer mi?
+        kalan_gun = (son_tarih - bugun).days
+        sorumlu = str(is_kaydi.get("Personel", "")).strip()
+        mesaj, hedef_tel = "", None
 
-            if kalan_gun < 0:
-                mesaj = f"🚨 GECİKEN GÖREV ({abs(kalan_gun)} gün): '{is_tanimi}'. Sorumlu: {sorumlu or 'Atanmamış'}"
-                hedef_tel = GRUP_ID
-            elif kalan_gun == 0:
-                mesaj = f"⚠️ ACİL - SON GÜN: '{is_tanimi}' görevi için bugün son gün! Sorumlu: {sorumlu or 'Atanmamış'}"
-                hedef_tel = GRUP_ID
-            elif 1 <= kalan_gun <= 3:
-                mesaj = f"🔔 HATIRLATMA ({kalan_gun} gün kaldı): '{is_tanimi}' görevinin son teslim tarihi yaklaşıyor."
-                if not sorumlu:
-                    print_report("UYARI", f"'{is_tanimi}' görevine sorumlu atanmamış, hatırlatma mesajı gönderilemiyor.")
-                    continue
-                sorumlu_tel = personel_telefonlari.get(sorumlu)
-                if not sorumlu_tel:
-                    print_report("UYARI", f"'{sorumlu}' isimli personelin telefonu 'Personel' sayfasında bulunamadı. Mesaj gönderilemiyor.")
-                    continue
-                hedef_tel = sorumlu_tel
-            
-            if mesaj and hedef_tel:
-                uyari_gonderilecek_is_sayisi += 1
-                print_report("BİLGİ", f"Mesaj hazırlanıyor -> Hedef: {hedef_tel}, İçerik: {mesaj}")
-                send_whatsapp(hedef_tel, mesaj, secrets)
+        if kalan_gun < 0:
+            print_report("KARAR", f"Görev {abs(kalan_gun)} gün gecikmiş. GRUP mesajı hazırlanacak.")
+            mesaj = f"🚨 GECİKEN GÖREV ({abs(kalan_gun)} gün): '{is_tanimi}'. Sorumlu: {sorumlu or 'Atanmamış'}"
+            hedef_tel = GRUP_ID
+        elif kalan_gun == 0:
+            print_report("KARAR", "Görevin son günü. GRUP mesajı hazırlanacak.")
+            mesaj = f"⚠️ ACİL - SON GÜN: '{is_tanimi}' görevi için bugün son gün! Sorumlu: {sorumlu or 'Atanmamış'}"
+            hedef_tel = GRUP_ID
+        elif 1 <= kalan_gun <= 3:
+            print_report("KARAR", f"Görevin son tarihine {kalan_gun} gün kalmış. PERSONEL hatırlatması hazırlanacak.")
+            if not sorumlu:
+                print_report("UYARI", "Sorumlu atanmamış, hatırlatma mesajı gönderilemiyor.")
+                continue
+            sorumlu_tel = personel_telefonlari.get(sorumlu)
+            if not sorumlu_tel:
+                print_report("UYARI", f"'{sorumlu}' isimli personelin telefonu rehberde bulunamadı. (İsimler eşleşmiyor olabilir).")
+                continue
+            mesaj = f"🔔 HATIRLATMA ({kalan_gun} gün kaldı): '{is_tanimi}' görevinin son teslim tarihi yaklaşıyor."
+            hedef_tel = sorumlu_tel
+        else:
+            print_report("ATLANDI", f"Görevin son tarihine daha var ({kalan_gun} gün).")
+            continue
+        
+        # 5. Mesaj Gönderme
+        if mesaj and hedef_tel:
+            uyari_gonderilecek_is_sayisi += 1
+            send_whatsapp(hedef_tel, mesaj, secrets)
+        else:
+            print_report("BİLGİ", "Mesaj gönderme koşulları oluşmadı.")
 
-        except (ValueError, TypeError): continue
-    
+    print("\n" + "="*50)
     if uyari_gonderilecek_is_sayisi == 0:
-        print_report("BİLGİ", "Uyarı gönderilecek herhangi bir görev bulunamadı.")
-    
-    print_report("OK", "Uyarı sistemi kontrolü tamamlandı.")
-    print("="*40)
+        print_report("SONUÇ", "Tüm görevler kontrol edildi ancak uyarı gönderilecek bir durum bulunamadı.")
+    else:
+        print_report("SONUÇ", f"{uyari_gonderilecek_is_sayisi} adet uyarı mesajı gönderildi/gönderilmeye çalışıldı.")
+    print("="*50)
 
 if __name__ == "__main__":
     run_automation()
