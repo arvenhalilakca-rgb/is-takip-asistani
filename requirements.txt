@@ -4,5 +4,6 @@ oauth2client
 google-api-python-client
 requests
 pandas
-plotly-express
+plotly
 pdfplumber
+streamlit-option-menu
