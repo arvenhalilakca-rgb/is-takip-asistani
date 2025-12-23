@@ -1,175 +1,124 @@
 import streamlit as st
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+import pdfplumber # PDF'den metin ayıklamak için en stabil kütüphane
 from datetime import datetime
-import time
+import io
+import re
 
-# --- 1. PREMIUM SAYFA AYARLARI ---
-st.set_page_config(page_title="SMMM Halil Akça | KDV Analiz & İş Takip", page_icon="🏛️", layout="wide")
+# --- 1. SAYFA AYARLARI ---
+st.set_page_config(page_title="SMMM Halil Akça | AI KDV Denetim", page_icon="🤖", layout="wide")
 
-# --- 2. GELİŞMİŞ CSS TASARIMI (UI/UX) ---
+# --- 2. TASARIM ---
 st.markdown("""
     <style>
-    .stApp { background-color: #F1F5F9; font-family: 'Inter', sans-serif; }
-    [data-testid="stSidebar"] { background-color: #0F172A; border-right: 1px solid #1E293B; }
-    div.stMetric { background-color: #FFFFFF; padding: 25px !important; border-radius: 20px !important; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05) !important; border: 1px solid #E2E8F0 !important; }
-    .main-title { background: linear-gradient(90deg, #1E293B 0%, #334155 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 2.5rem; font-weight: 800; text-align: center; margin-bottom: 5px; }
-    .sub-title { color: #64748B; text-align: center; font-size: 1.1rem; margin-bottom: 30px; }
-    .stButton>button { border-radius: 12px !important; font-weight: 600 !important; background-color: #2563EB !important; color: white !important; transition: all 0.2s ease !important; }
-    .risk-card { background-color: #FEE2E2; border-left: 5px solid #EF4444; padding: 15px; border-radius: 10px; margin-bottom: 10px; }
-    .safe-card { background-color: #DCFCE7; border-left: 5px solid #22C55E; padding: 15px; border-radius: 10px; margin-bottom: 10px; }
+    .stApp { background-color: #F8FAFC; }
+    .report-card { background-color: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #E2E8F0; margin-bottom: 15px; }
+    .risk-high { border-left: 8px solid #EF4444; }
+    .risk-low { border-left: 8px solid #10B981; }
+    .main-title { color: #1E293B; font-size: 2.5rem; font-weight: 800; text-align: center; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. VERİ BAĞLANTISI ---
-@st.cache_resource
-def google_baglan():
-    try:
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
-        return gspread.authorize(creds).open("Is_Takip_Sistemi")
-    except: return None
+# --- 3. FONKSİYONLAR (BEYANNAME OKUMA MOTORU) ---
+def beyanname_analiz_et(pdf_file):
+    results = []
+    with pdfplumber.open(pdf_file) as pdf:
+        for i, page in enumerate(pdf.pages):
+            text = page.extract_text()
+            if not text: continue
+            
+            # --- VERİ AYIKLAMA MANTIĞI (REGEX) ---
+            # Not: Bu desenler standart KDV1 beyannamesi formatına göre optimize edilmiştir.
+            
+            # 1. Mükellef Adı/Unvanı (Genelde üst kısımdadır)
+            unvan_match = re.search(r"Soyadı \(Unvanı\)\s+(.*)", text)
+            unvan = unvan_match.group(1).strip() if unvan_match else f"Bilinmeyen Mükellef (Sayfa {i+1})"
+            
+            # 2. Matrah Toplamı
+            matrah_match = re.search(r"Matrah Toplamı\s+([\d\.,]+)", text)
+            matrah = float(matrah_match.group(1).replace(".", "").replace(",", ".")) if matrah_match else 0.0
+            
+            # 3. Hesaplanan KDV
+            kdv_match = re.search(r"Hesaplanan Katma Değer Vergisi\s+([\d\.,]+)", text)
+            kdv = float(kdv_match.group(1).replace(".", "").replace(",", ".")) if kdv_match else 0.0
+            
+            # 4. Kredi Kartı ile Tahsil Edilen (POS) - Genelde en alt tablodadır
+            pos_match = re.search(r"Kredi Kartı ile Tahsil Edilen Teslim ve Hizmetlerin Bedeli\s+([\d\.,]+)", text)
+            pos = float(pos_match.group(1).replace(".", "").replace(",", ".")) if pos_match else 0.0
+            
+            # --- HESAPLAMA VE RİSK ANALİZİ ---
+            toplam_gelir = matrah + kdv
+            fark = toplam_gelir - pos
+            risk_durumu = "🚨 RİSKLİ" if fark < 0 else "✅ UYGUN"
+            
+            results.append({
+                "Mükellef": unvan,
+                "Matrah": matrah,
+                "KDV": kdv,
+                "Toplam Beyan": toplam_gelir,
+                "POS Tahsilat": pos,
+                "Fark": fark,
+                "Durum": risk_durumu
+            })
+    return pd.DataFrame(results)
 
-doc = google_baglan()
+# --- 4. ARAYÜZ ---
+st.markdown("<div class='main-title'>SMMM HALİL AKÇA AI DENETİM</div>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center; color:#64748B;'>Toplu KDV Beyannamesi Analiz ve Risk Tespit Sistemi</p>", unsafe_allow_html=True)
+st.divider()
 
-def verileri_getir(sayfa_adi):
-    try: return pd.DataFrame(doc.worksheet(sayfa_adi).get_all_records())
-    except: return pd.DataFrame()
-
-# --- 4. SIDEBAR ---
+# Yan Menü
 with st.sidebar:
-    st.markdown("<h1 style='text-align: center;'>🏛️ HALİL AKÇA</h1>", unsafe_allow_html=True)
-    st.divider()
-    menu = {
-        "🏠 Dashboard": "📊 Genel Bakış",
-        "🔍 KDV Analiz": "🔍 KDV Denetim",
-        "➕ Yeni Kayıt": "➕ İş Ekle",
-        "📋 İş Listesi": "✅ Yönetim",
-        "👥 Mükellefler": "👥 Arşiv"
-    }
-    secim = st.radio("Navigasyon", list(menu.keys()))
-    if st.button("🔄 Verileri Tazele", use_container_width=True):
-        st.cache_data.clear()
+    st.header("⚙️ Ayarlar")
+    st.info("Sistem, yüklediğiniz PDF'deki her sayfayı ayrı bir beyanname olarak kabul eder ve analiz eder.")
+    if st.button("Verileri Sıfırla"):
         st.rerun()
 
-st.markdown(f"<div class='main-title'>SMMM HALİL AKÇA</div>", unsafe_allow_html=True)
-st.markdown(f"<div class='sub-title'>Analiz, KDV Denetim ve İş Takip Sistemi</div>", unsafe_allow_html=True)
+# Ana Ekran
+col1, col2 = st.columns([1, 3])
 
-# --- 5. SAYFA İÇERİKLERİ ---
-
-if menu[secim] == "🔍 KDV Denetim":
-    st.markdown("### 🔍 KDV Beyannamesi & POS Tutarlılık Analizi")
-    st.info("Bu modül, beyan edilen KDV matrahı ile banka POS verilerini karşılaştırarak risk analizi yapar.")
+with col1:
+    st.subheader("📥 Dosya Yükleme")
+    uploaded_file = st.file_uploader("Beyannameleri içeren PDF dosyasını seçin", type="pdf")
     
-    # Veri Giriş Alanı (Simüle edilmiş veya Google Sheets'ten çekilen)
-    with st.expander("📥 Analiz İçin Veri Girişi", expanded=True):
-        with st.form("kdv_analiz_form"):
-            c1, c2, c3 = st.columns(3)
-            df_m = verileri_getir("Musteriler")
-            m_list = df_m['Ad Soyad'].tolist() if not df_m.empty else ["Müşteri Seçin"]
-            secilen_m = c1.selectbox("Mükellef", m_list)
-            matrah = c2.number_input("Toplam KDV Matrahı (KDV Hariç)", min_value=0.0, step=1000.0)
-            pos_tahsilat = c3.number_input("Kredi Kartı (POS) Tahsilatı (KDV Dahil)", min_value=0.0, step=1000.0)
-            
-            kdv_orani = st.selectbox("Genel KDV Oranı", [20, 10, 1, 0], index=0)
-            
-            if st.form_submit_button("Analiz Et ve Kaydet"):
-                kdv_tutari = matrah * (kdv_orani / 100)
-                toplam_beyan = matrah + kdv_tutari
-                fark = toplam_beyan - pos_tahsilat
-                durum = "RİSKLİ" if fark < 0 else "UYGUN"
-                
-                # Google Sheets'e kaydet (KDV_Analiz adında bir sayfa olduğunu varsayıyoruz)
+    if uploaded_file is not None:
+        if st.button("Analizi Başlat", type="primary", use_container_width=True):
+            with st.spinner("Yapay zeka beyannameleri okuyor..."):
                 try:
-                    analiz_sheet = doc.worksheet("KDV_Analiz")
-                    analiz_sheet.append_row([datetime.now().strftime("%d.%m.%Y"), secilen_m, matrah, pos_tahsilat, fark, durum])
-                    st.success("Analiz tamamlandı ve kaydedildi!")
-                except:
-                    st.warning("KDV_Analiz sayfası bulunamadı, sadece ekranda gösteriliyor.")
-                
-                st.session_state['son_analiz'] = {"m": secilen_m, "matrah": matrah, "pos": pos_tahsilat, "fark": fark, "durum": durum, "beyan": toplam_beyan}
+                    df_sonuc = beyanname_analiz_et(uploaded_file)
+                    st.session_state['analiz_sonuc'] = df_sonuc
+                    st.success(f"{len(df_sonuc)} Beyanname analiz edildi!")
+                except Exception as e:
+                    st.error(f"Hata oluştu: {e}")
 
-    # Analiz Sonuç Ekranı
-    if 'son_analiz' in st.session_state:
-        res = st.session_state['son_analiz']
+with col2:
+    if 'analiz_sonuc' in st.session_state:
+        df = st.session_state['analiz_sonuc']
+        
+        # Özet Metrikler
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Toplam Beyanname", len(df))
+        s2.metric("Riskli Mükellef", len(df[df['Durum'] == "🚨 RİSKLİ"]), delta_color="inverse")
+        s3.metric("Toplam POS Hacmi", f"{df['POS Tahsilat'].sum():,.2f} ₺")
+        
         st.divider()
-        col1, col2 = st.columns([2, 1])
         
-        with col1:
-            if res['durum'] == "RİSKLİ":
-                st.markdown(f"""<div class='risk-card'>
-                    <h4>🚨 DİKKAT: POS Tutarsızlığı Tespit Edildi!</h4>
-                    <p><b>Mükellef:</b> {res['m']}<br>
-                    <b>Beyan Edilen Toplam (KDV Dahil):</b> {res['beyan']:,.2f} ₺<br>
-                    <b>POS Tahsilatı:</b> {res['pos']:,.2f} ₺<br>
-                    <b>Fark:</b> <span style='color:red'>{res['fark']:,.2f} ₺</span></p>
-                    <p><i>POS tahsilatı, beyan edilen KDV dahil matrahtan fazladır. İnceleme riski mevcuttur!</i></p>
-                </div>""", unsafe_allow_html=True)
-                
-                # Otomatik Mesaj Hazırlama
-                mesaj = f"Sayın {res['m']}, {datetime.now().strftime('%m/%Y')} dönemi KDV beyannamenizde kredi kartı (POS) tahsilatınız ({res['pos']:,.2f} TL), beyan edilen matrahın üzerindedir. Lütfen kontrol ediniz."
-                st.text_area("Tuğçe Hanım'a Gönderilecek Mesaj Taslağı:", mesaj)
-            else:
-                st.markdown(f"""<div class='safe-card'>
-                    <h4>✅ Veriler Tutarlı</h4>
-                    <p><b>Mükellef:</b> {res['m']}<br>
-                    <b>Durum:</b> POS tahsilatı beyan sınırları içerisindedir.</p>
-                </div>""", unsafe_allow_html=True)
-
-        with col2:
-            fig = go.Figure(go.Bar(
-                x=['Beyan (KDV Dahil)', 'POS Tahsilat'],
-                y=[res['beyan'], res['pos']],
-                marker_color=['#2563EB', '#EF4444' if res['durum'] == "RİSKLİ" else '#22C55E']
-            ))
-            fig.update_layout(title="Karşılaştırma Grafiği", height=300)
-            st.plotly_chart(fig, use_container_width=True)
-
-elif menu[secim] == "📊 Genel Bakış":
-    df = verileri_getir("Sheet1")
-    if not df.empty:
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Toplam İş", len(df))
-        m2.metric("Bekleyen", len(df[df['Durum'] != 'Tamamlandi']), delta_color="inverse")
-        m3.metric("Tamamlanan", len(df[df['Durum'] == 'Tamamlandi']))
+        # Detaylı Tablo
+        st.subheader("📋 Analiz Sonuç Listesi")
+        st.dataframe(df.style.apply(lambda x: ['background-color: #fee2e2' if v == "🚨 RİSKLİ" else '' for v in x], axis=1), use_container_width=True)
         
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("### 📊 Personel Yükü")
-            fig = px.bar(df[df['Durum'] != 'Tamamlandi']['Personel'].value_counts().reset_index(), x='index', y='Personel', template="plotly_white")
-            st.plotly_chart(fig, use_container_width=True)
-        with c2:
-            st.markdown("### 🥧 İş Durumu")
-            fig2 = px.pie(df, names='Durum', hole=0.5)
-            st.plotly_chart(fig2, use_container_width=True)
+        # Riskli Mükellefler İçin Otomatik Mesajlar
+        riskli_df = df[df['Durum'] == "🚨 RİSKLİ"]
+        if not riskli_df.empty:
+            st.divider()
+            st.subheader("⚠️ Riskli Mükellefler İçin Uyarı Taslakları")
+            for _, row in riskli_df.iterrows():
+                with st.expander(f"📩 {row['Mükellef']} için mesaj hazırla"):
+                    mesaj = f"Sayın {row['Mükellef']}, KDV beyannamenizde POS tahsilatınız ({row['POS Tahsilat']:,.2f} TL), beyan edilen matrahın ({row['Toplam Beyan']:,.2f} TL) üzerindedir. Lütfen kontrol ediniz."
+                    st.text_area("Mesaj Metni:", mesaj, height=100)
+                    st.button(f"WhatsApp'a Kopyala ({row['Mükellef']})")
+    else:
+        st.info("Analiz sonuçlarını görmek için sol taraftan PDF yükleyip 'Analizi Başlat' butonuna basın.")
 
-elif menu[secim] == "➕ İş Ekle":
-    st.markdown("### 📝 Yeni Görev")
-    df_m = verileri_getir("Musteriler")
-    with st.form("is_form"):
-        tarih = st.date_input("Tarih")
-        m_list = df_m['Ad Soyad'].tolist() if not df_m.empty else ["Boş"]
-        musteri = st.selectbox("Mükellef", m_list)
-        is_tanimi = st.text_area("İş Detayı")
-        personel = st.selectbox("Sorumlu", ["Halil", "Aslı", "Tuğçe", "Özlem"])
-        if st.form_submit_button("Kaydet"):
-            doc.sheet1.append_row([tarih.strftime("%d.%m.%Y"), "09:00", f"{musteri} - {is_tanimi}", "Bekliyor", personel, ""])
-            st.success("Kaydedildi!")
-
-elif menu[secim] == "✅ Yönetim":
-    st.markdown("### 📋 İş Listesi")
-    df = verileri_getir("Sheet1")
-    if not df.empty:
-        st.dataframe(df, use_container_width=True)
-        is_idx = st.selectbox("İş Seç", df.index.tolist(), format_func=lambda x: f"{df.iloc[x]['Is Tanimi']}")
-        yeni_durum = st.selectbox("Durum", ["Bekliyor", "Tamamlandi"])
-        if st.button("Güncelle"):
-            doc.sheet1.update_cell(is_idx + 2, 4, yeni_durum)
-            st.rerun()
-
-elif menu[secim] == "👥 Arşiv":
-    st.markdown("### 👥 Mükellefler")
-    df_m = verileri_getir("Musteriler")
-    if not df_m.empty: st.dataframe(df_m, use_container_width=True)
+# --- 5. GEREKLİ KÜTÜPHANE UYARISI ---
+# requirements.txt dosyanıza 'pdfplumber' eklemeyi unutmayın!
