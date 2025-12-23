@@ -10,97 +10,28 @@ from datetime import datetime, timedelta
 import time
 import plotly.express as px
 import pdfplumber
+import io
 
-# --- SAYFA AYARLARI (Geniş & Modern) ---
+# --- SAYFA AYARLARI ---
 st.set_page_config(
-    page_title="Müşavir Asistanı Pro",
-    page_icon="💼",
+    page_title="Müşavir Asistanı Pro X",
+    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- TASARIM & CSS (MAKYAJ ÇANTASI 💄) ---
+# --- TASARIM (CSS) ---
 st.markdown("""
     <style>
-    /* Genel Arka Plan */
     .stApp {background-color: #f4f6f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;}
-    
-    /* Sidebar (Yan Menü) */
-    [data-testid="stSidebar"] {
-        background-color: #2c3e50;
-    }
-    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-        color: #ecf0f1 !important;
-    }
-    
-    /* Metrik Kartları (Gölge Efekti) */
-    div[data-testid="stMetric"] {
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        padding: 15px 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        transition: transform 0.2s;
-    }
-    div[data-testid="stMetric"]:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 8px rgba(0,0,0,0.1);
-    }
-    div[data-testid="stMetricLabel"] {font-size: 14px; color: #7f8c8d;}
-    div[data-testid="stMetricValue"] {font-size: 28px; color: #2c3e50; font-weight: 700;}
-
-    /* Butonlar */
-    .stButton>button {
-        width: 100%; 
-        border-radius: 8px; 
-        font-weight: 600; 
-        height: 45px;
-        border: none;
-        transition: background 0.3s;
-    }
-    button[kind="primary"] {
-        background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); 
-        color: white;
-        box-shadow: 0 2px 4px rgba(52, 152, 219, 0.3);
-    }
-    button[kind="secondary"] {
-        background-color: #ffffff;
-        color: #34495e;
-        border: 1px solid #bdc3c7;
-    }
-
-    /* Etiketler & Rozetler */
-    .etiket {
-        background-color: #e0f2f1; color: #00695c; 
-        padding: 4px 10px; border-radius: 15px; 
-        font-size: 12px; border: 1px solid #b2dfdb; display: inline-block; margin: 2px;
-    }
-    .vip-badge {color: #f1c40f; font-weight: bold; text-shadow: 1px 1px 1px rgba(0,0,0,0.1);}
-    
-    /* Uyarı Kutuları */
-    .tatil-uyari {
-        background-color: #ffebee; color: #c62828; 
-        padding: 12px; border-radius: 8px; 
-        border-left: 5px solid #ef5350; font-weight: 500;
-    }
-    .sahipsiz {
-        background-color: #fff8e1; color: #f57f17;
-        padding: 12px; border-radius: 8px;
-        border-left: 5px solid #ffca28;
-    }
-
-    /* Not Kutuları */
-    .tarihli-not {
-        font-size: 13px; color: #34495e; 
-        background-color: #ffffff; padding: 10px; 
-        border-radius: 6px; margin-bottom: 8px; 
-        border-left: 4px solid #3498db;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    
-    /* Tablo Başlıkları */
-    thead tr th:first-child {display:none}
-    tbody th {display:none}
+    [data-testid="stSidebar"] {background-color: #2c3e50;}
+    [data-testid="stSidebar"] * {color: #ecf0f1 !important;}
+    div[data-testid="stMetric"] {background-color: #ffffff; border: 1px solid #e0e0e0; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);}
+    .stButton>button {width: 100%; border-radius: 8px; font-weight: 600; height: 45px;}
+    button[kind="primary"] {background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); color: white;}
+    .etiket {background-color: #e0f2f1; color: #00695c; padding: 4px 10px; border-radius: 15px; font-size: 12px; margin: 2px;}
+    .tatil-uyari {background-color: #ffebee; color: #c62828; padding: 12px; border-radius: 8px; border-left: 5px solid #ef5350;}
+    .basari-kutu {background-color: #e8f5e9; color: #2e7d32; padding: 15px; border-radius: 8px; border-left: 5px solid #43a047;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -168,6 +99,15 @@ def beyanname_analiz_et(pdf_file):
         return 0.0, text
     except Exception as e: return 0.0, str(e)
 
+# --- YENİ: EXCEL EXPORT (YEDEKLEME) ---
+def excel_yedek_olustur(df_is, df_mus, df_cari):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_is.to_excel(writer, sheet_name='Is_Listesi', index=False)
+        df_mus.to_excel(writer, sheet_name='Musteriler', index=False)
+        df_cari.to_excel(writer, sheet_name='Finans_Cari', index=False)
+    return output.getvalue()
+
 @st.cache_data(ttl=60)
 def verileri_getir(sayfa="Ana"):
     try: sheet = google_sheet_baglan(sayfa); return pd.DataFrame(sheet.get_all_records())
@@ -176,20 +116,19 @@ def onbellek_temizle(): verileri_getir.clear()
 
 # --- YAN MENÜ ---
 with st.sidebar:
-    st.markdown("<h2 style='text-align: center;'>MÜŞAVİR PRO 💎</h2>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center;'>MÜŞAVİR PRO X 🛡️</h3>", unsafe_allow_html=True)
     
-    # Kullanıcı
     df_m = verileri_getir("Musteriler")
     p_list = ["Admin"]
     if not df_m.empty and "Sorumlu" in df_m.columns:
         p_list += [p for p in df_m["Sorumlu"].unique().tolist() if str(p) not in ["nan", ""]]
-    aktif = st.selectbox("👤 Aktif Kullanıcı", list(set(p_list)))
+    aktif = st.selectbox("👤 Kullanıcı", list(set(p_list)))
 
     st.session_state['sessiz_mod'] = st.toggle("🔕 Sessiz Mod", value=st.session_state['sessiz_mod'])
     arama = st.text_input("🔍 Hızlı Git (Ctrl+K)", placeholder="Ara...")
     
     st.markdown("---")
-    menu = ["📊 Genel Bakış", "➕ İş Ekle", "✅ İş Yönetimi", "📂 Müşteri Arşivi", "💰 Finans & Kâr", "🏢 Kuruluş Sihirbazı", "🧮 Defter Tasdik", "👥 Personel & Portföy"]
+    menu = ["📊 Genel Bakış", "➕ İş Ekle", "✅ İş Yönetimi", "📂 Müşteri Arşivi", "💰 Finans & Kâr", "🏢 Kuruluş Sihirbazı", "⚙️ Ayarlar & Yedek"]
     secim = st.radio("MENÜ", menu)
     
     st.markdown("---")
@@ -198,24 +137,19 @@ with st.sidebar:
 if arama:
     if "ekle" in arama.lower(): secim = "➕ İş Ekle"
     elif "finans" in arama.lower(): secim = "💰 Finans & Kâr"
+    elif "ayar" in arama.lower(): secim = "⚙️ Ayarlar & Yedek"
 
 # --- 1. DASHBOARD ---
 if secim == "📊 Genel Bakış":
     st.title("📊 Yönetim Kokpiti")
     df = verileri_getir("Sheet1")
     
-    # Doğum Günü
-    if not df_m.empty and "Dogum_Tarihi" in df_m.columns:
-        bugun = datetime.now()
-        df_m["Dogum_Tarihi_Format"] = pd.to_datetime(df_m["Dogum_Tarihi"], format='%d.%m.%Y', errors='coerce')
-        bg = df_m[(df_m["Dogum_Tarihi_Format"].dt.day == bugun.day) & (df_m["Dogum_Tarihi_Format"].dt.month == bugun.month)]
-        if not bg.empty: st.success(f"🎂 BUGÜN DOĞUM GÜNÜ: {', '.join(bg['Ad Soyad'].tolist())}")
-
     if not df.empty and "Durum" in df.columns:
+        # Metrikler
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Toplam İş", len(df), "Adet")
-        c2.metric("✅ Biten", len(df[df["Durum"]=="Tamamlandi"]), "İş")
-        c3.metric("⏳ Bekleyen", len(df[df["Durum"]!="Tamamlandi"]), "İş")
+        c1.metric("Toplam İş", len(df))
+        c2.metric("✅ Biten", len(df[df["Durum"]=="Tamamlandi"]))
+        c3.metric("⏳ Bekleyen", len(df[df["Durum"]!="Tamamlandi"]))
         
         df_c = verileri_getir("Cari")
         if not df_c.empty:
@@ -224,10 +158,7 @@ if secim == "📊 Genel Bakış":
             c4.metric("Net Kâr", f"{net:,.0f} TL", delta_color="normal" if net>0 else "inverse")
         else: c4.metric("Net Kâr", "0 TL")
 
-        if "Personel" in df.columns:
-            sahipsiz = df[(df["Personel"] == "") & (df["Durum"] != "Tamamlandi")]
-            if not sahipsiz.empty: st.markdown(f"<div class='sahipsiz'>⚠️ <b>Dikkat:</b> {len(sahipsiz)} adet işe personel atanmamış!</div>", unsafe_allow_html=True)
-
+        # Son Hareketler & Pasta Grafik
         col1, col2 = st.columns([2,1])
         with col1: 
             st.markdown("### 🗓️ Son Hareketler")
@@ -244,25 +175,24 @@ elif secim == "➕ İş Ekle":
             c1, c2 = st.columns(2)
             tarih = c1.date_input("Tarih")
             if tarih.strftime("%d.%m") in RESMI_TATILLER or tarih.weekday() == 6:
-                st.markdown(f"<div class='tatil-uyari'>⚠️ {tarih.strftime('%d.%m.%Y')} tarihi resmi tatil veya Pazar günüdür.</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='tatil-uyari'>⚠️ {tarih.strftime('%d.%m.%Y')} resmi tatil veya Pazar.</div>", unsafe_allow_html=True)
             saat = c2.time_input("Saat")
             
-            # VIP Müşteri
-            m_list = []
+            mus_list = []
             if not df_m.empty:
                 df_m["Ucret"] = pd.to_numeric(df_m["Ucret"].astype(str).str.replace(",", ""), errors='coerce').fillna(0)
                 lim = df_m["Ucret"].quantile(0.8)
                 for i, r in df_m.iterrows():
                     ad = r["Ad Soyad"]
                     if r["Ucret"] >= lim and lim > 0: ad = f"⭐ {ad} (VIP)"
-                    m_list.append(ad)
+                    mus_list.append(ad)
             
-            mus = st.selectbox("Mükellef", m_list).replace("⭐ ", "").replace(" (VIP)", "")
+            mus = st.selectbox("Mükellef", mus_list).replace("⭐ ", "").replace(" (VIP)", "")
             
-            # Personel Yükü
+            # Personel Otomatik Seç
+            df_is = verileri_getir("Sheet1")
             p_list_yuk = [""]
             def_i = 0
-            df_is = verileri_getir("Sheet1")
             
             s_bul = ""
             if not df_m.empty and "Sorumlu" in df_m.columns:
@@ -287,19 +217,16 @@ elif secim == "➕ İş Ekle":
                 google_sheet_baglan("Sheet1").append_row([tarih.strftime("%d.%m.%Y"), saat.strftime("%H:%M"), f"{mus} - {notu}", "Gonderildi", "Bekliyor", "-", sec_p])
                 onbellek_temizle()
                 whatsapp_gonder(GRUP_ID, f"🆕 *İŞ*: {mus} - {notu} ({sec_p})")
-                if sms:
+                if sms and not df_m.empty:
                     satir = df_m[df_m["Ad Soyad"] == mus]
                     if not satir.empty:
                         for n in numaralari_ayikla(satir.iloc[0]["Telefon"]): whatsapp_gonder(n, f"Sayın {mus}, işleminiz ({notu}) alınmıştır.")
                 st.success("Kaydedildi!")
 
-# --- 3. İŞ YÖNETİMİ (TAKVİM EKLENDİ) ---
+# --- 3. İŞ YÖNETİMİ ---
 elif secim == "✅ İş Yönetimi":
     st.title("📋 İş Takip Merkezi")
-    
-    # SEKMELER (Liste Görünümü vs Takvim)
-    tab_list, tab_takvim = st.tabs(["📋 Liste Görünümü", "📅 Takvim Görünümü"])
-    
+    tab_list, tab_takvim = st.tabs(["📋 Liste", "📅 Takvim"])
     df = verileri_getir("Sheet1")
     
     with tab_list:
@@ -344,20 +271,12 @@ elif secim == "✅ İş Yönetimi":
                 google_sheet_baglan("Sheet1").append_row([t_yeni, satir["Saat"], satir["Is Tanimi"], "Gonderildi", "Bekliyor", "-", satir.get("Personel", "")]); onbellek_temizle(); st.success("Kopyalandı")
 
     with tab_takvim:
-        st.subheader("📅 İş Takvimi")
         if not df.empty:
-            # Tarihi datetime'a çevir
             df['Baslangic'] = pd.to_datetime(df['Tarih'], format='%d.%m.%Y', errors='coerce')
-            df['Bitis'] = df['Baslangic'] + pd.Timedelta(days=1) # 1 günlük iş olarak göster
-            df = df.dropna(subset=['Baslangic']) # Tarihi hatalı olanları at
-            
+            df['Bitis'] = df['Baslangic'] + pd.Timedelta(days=1)
+            df = df.dropna(subset=['Baslangic'])
             if not df.empty:
-                # Gantt Şeması Gibi Gösterim
-                fig = px.timeline(df, x_start="Baslangic", x_end="Bitis", y="Personel", color="Durum", hover_name="Is Tanimi", title="İşlerin Zaman Çizelgesi")
-                fig.update_yaxes(autorange="reversed") # Personelleri yukarıdan aşağı sırala
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("Takvimde gösterilecek tarihli veri bulunamadı.")
+                st.plotly_chart(px.timeline(df, x_start="Baslangic", x_end="Bitis", y="Personel", color="Durum", hover_name="Is Tanimi"), use_container_width=True)
 
 # --- 4. ARŞİV ---
 elif secim == "📂 Müşteri Arşivi":
@@ -419,13 +338,13 @@ elif secim == "💰 Finans & Kâr":
                 onbellek_temizle(); st.success("Kaydedildi"); st.rerun()
 
     with t3:
-        st.info("KDV Beyannamesi PDF'ini yükleyin, POS tutarını otomatik okuyalım.")
+        st.info("KDV PDF yükleyin, POS tutarını okuyalım.")
         up = st.file_uploader("KDV PDF", type="pdf")
         if up:
             val, txt = beyanname_analiz_et(up)
             if val > 0:
-                st.success(f"✅ Okunan POS Tutarı: {val:,.2f} TL")
-                if st.button("Kaydet (Cari Hesaba)"):
+                st.success(f"✅ Okunan: {val:,.2f} TL")
+                if st.button("Kaydet"):
                     google_sheet_baglan("Cari").append_row([datetime.now().strftime("%d.%m.%Y"), "OCR", "POS Bilgi", val, "KDV Okuma"])
                     st.success("Eklendi")
             else: st.error("Okunamadı")
@@ -460,19 +379,43 @@ elif secim == "🏢 Kuruluş Sihirbazı":
             google_sheet_baglan("Sheet1").append_row([datetime.now().strftime("%d.%m.%Y"), "-", baslik, "-", "Bekliyor", "-", aktif])
             st.success("İşlem Başlatıldı")
 
-# --- 7. TASDİK ---
-elif secim == "🧮 Defter Tasdik":
-    st.title("🧮 Tasdik Hesapla")
-    c1,c2=st.columns(2); s=c1.number_input("Sayfa Sayısı", 100); h=c2.number_input("Hizmet Bedeli", 3500)
-    noter = (s*6.0)+300
-    st.metric("Müşteriden İstenecek", f"{noter+h:,.2f} TL", delta=f"Noter Masrafı: {noter} TL")
+# --- 7. AYARLAR & YEDEK (YENİ) ---
+elif secim == "⚙️ Ayarlar & Yedek":
+    st.title("⚙️ Ayarlar ve Güvenlik")
+    
+    st.subheader("📥 Toplu Müşteri Yükle (Excel)")
+    uploaded_excel = st.file_uploader("Müşteri Listesi (Excel)", type="xlsx")
+    if uploaded_excel:
+        try:
+            df_new = pd.read_excel(uploaded_excel)
+            st.dataframe(df_new.head())
+            if st.button("Bu Listeyi İçeri Aktar"):
+                # Sütunları kontrol et ve aktar
+                gerekli = ["Ad Soyad", "Telefon", "TC"]
+                if all(col in df_new.columns for col in gerekli):
+                    data = df_new[gerekli].values.tolist()
+                    # Diğer sütunları boş geçerek ekle
+                    final_data = [[row[0], row[1], row[2], "", "", "", ""] for row in data]
+                    google_sheet_baglan("Musteriler").append_rows(final_data)
+                    onbellek_temizle(); st.success(f"{len(data)} Müşteri Aktarıldı!")
+                else:
+                    st.error("Excel'de 'Ad Soyad', 'Telefon', 'TC' sütunları olmalı.")
+        except Exception as e: st.error(f"Hata: {e}")
 
-# --- 8. PERSONEL ---
-elif secim == "👥 Personel & Portföy":
-    st.title("👥 Analiz")
-    if not df_m.empty and "Sorumlu" in df_m.columns:
-        df_m["Ucret"] = pd.to_numeric(df_m["Ucret"].astype(str).str.replace(",", ""), errors='coerce').fillna(0)
-        ozet = df_m.groupby("Sorumlu")["Ucret"].sum().reset_index().sort_values("Ucret", ascending=False)
-        c1, c2 = st.columns(2)
-        c1.dataframe(ozet, use_container_width=True)
-        c2.plotly_chart(px.pie(ozet, values="Ucret", names="Sorumlu", hole=0.4))
+    st.divider()
+    
+    st.subheader("🛡️ Veri Yedekleme")
+    st.write("Tüm sistem verilerini (Müşteriler, İşler, Cari) tek bir Excel dosyası olarak indir.")
+    
+    df_is = verileri_getir("Sheet1")
+    df_mus = verileri_getir("Musteriler")
+    df_cari = verileri_getir("Cari")
+    
+    if st.button("📦 YEDEĞİ HAZIRLA"):
+        excel_data = excel_yedek_olustur(df_is, df_mus, df_cari)
+        st.download_button(
+            label="⬇️ Excel Olarak İndir (Backup.xlsx)",
+            data=excel_data,
+            file_name=f"Ofis_Yedek_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
