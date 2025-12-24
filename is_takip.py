@@ -6,71 +6,55 @@ import time
 import pdfplumber
 
 # ==========================================
-# 1. AYARLAR & GÖRSEL TASARIM (MATRIX MODU)
+# 1. AYARLAR & MATRIX TASARIM
 # ==========================================
 st.set_page_config(
-    page_title="Müşavir İletişim Kulesi",
+    page_title="Müşavir Kulesi - Master Sürüm",
     page_icon="🗼",
     layout="wide"
 )
 
-# API Bilgileri (Buraya kendi bilgilerinizi girin)
+# API Ayarları
 ID_INSTANCE = st.secrets.get("ID_INSTANCE", "YOUR_INSTANCE_ID")
 API_TOKEN = st.secrets.get("API_TOKEN", "YOUR_API_TOKEN")
 SABIT_IHBAR_NO = "905351041616"
 
 st.markdown("""
     <style>
-    /* Ana Arka Plan */
-    .stApp {background-color: #0e1117; color: #e0e0e0; font-family: 'Segoe UI', sans-serif;}
+    .stApp {background-color: #000000; color: #0f0; font-family: 'Courier New', sans-serif;}
     
-    /* HAVALI TERMİNAL EKRANI */
-    .terminal-window {
-        background-color: #000000;
-        color: #00ff41; /* Hacker Yeşili */
-        font-family: 'Courier New', Courier, monospace;
-        padding: 15px;
-        border: 1px solid #333;
-        border-radius: 5px;
-        height: 350px;
-        overflow-y: auto;
-        box-shadow: 0 0 20px rgba(0, 255, 65, 0.15);
-        font-size: 13px;
-        line-height: 1.5;
-        margin-bottom: 20px;
+    /* Terminal Görünümü */
+    .terminal-box {
+        background-color: #111; border: 1px solid #333; color: #00ff00;
+        padding: 15px; height: 300px; overflow-y: auto; font-family: monospace;
+        box-shadow: 0 0 10px rgba(0,255,0,0.2); margin-bottom: 20px;
     }
     
-    /* SONUÇ KARTLARI */
+    /* Kartlar */
     .risk-card {
-        background-color: #1a1a1a;
-        border-left: 5px solid #ff4b4b;
-        padding: 20px;
-        margin-bottom: 15px;
-        border-radius: 8px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+        background-color: #1a1a1a; border-left: 5px solid #ff0000;
+        padding: 15px; margin-bottom: 10px; border-radius: 5px;
     }
-    .card-head {font-size: 18px; font-weight: bold; color: #fff;}
-    .card-sub {font-size: 13px; color: #888; margin-top: 5px;}
-    .card-val {font-size: 16px; font-weight: bold; color: #eee;}
-    .card-alert {color: #ff4b4b; font-weight: bold; font-size: 16px; margin-top: 10px; border-top: 1px solid #333; padding-top: 10px;}
+    .white-text {color: #ffffff;}
+    .gray-text {color: #aaaaaa; font-size: 12px;}
+    .big-num {font-size: 18px; font-weight: bold; color: #fff;}
     
-    /* BUTONLAR */
     .stButton>button {
-        background-color: #262730; color: white; border: 1px solid #444; width: 100%;
+        background-color: #333; color: #0f0; border: 1px solid #0f0;
+        transition: 0.3s;
     }
-    .stButton>button:hover {border-color: #00ff41; color: #00ff41;}
+    .stButton>button:hover {background-color: #0f0; color: #000;}
     </style>
     """, unsafe_allow_html=True)
 
-# Session State
+# Session
 if 'sonuclar' not in st.session_state: st.session_state['sonuclar'] = None
 
 # ==========================================
-# 2. MOTOR (İSİM VE VERİ AVCISI)
+# 2. MOTOR: ÇOKLU KİLİT AÇMA SİSTEMİ
 # ==========================================
 
 def text_to_float(text):
-    """Metni paraya çevirir."""
     try:
         clean = re.sub(r'[^\d,\.]', '', str(text)).strip()
         if "," in clean and "." in clean: clean = clean.replace(".", "").replace(",", ".")
@@ -79,185 +63,169 @@ def text_to_float(text):
     except: return 0.0
 
 def para_formatla(deger):
-    """TL formatı yapar."""
     return "{:,.2f} TL".format(deger).replace(",", "X").replace(".", ",").replace("X", ".")
 
 def whatsapp_gonder(mesaj):
-    chat_id = f"{SABIT_IHBAR_NO}@c.us"
     url = f"https://api.green-api.com/waInstance{ID_INSTANCE}/sendMessage/{API_TOKEN}"
     try:
-        requests.post(url, json={'chatId': chat_id, 'message': mesaj})
+        requests.post(url, json={'chatId': f"{SABIT_IHBAR_NO}@c.us", 'message': mesaj})
         return True
     except: return False
 
-def mukellef_ismini_sok_al(text):
+def isim_avcisi(text):
     """
-    Bu fonksiyon PDF içindeki gizli formatı (CSV yapısını) söker alır.
-    Örnek yapı: "Soyadı (Unvanı)","18 MART...",,
+    Bu fonksiyon ismi bulmak için 3 farklı strateji dener.
     """
-    isim_tam = ""
+    isim = ""
+    lines = text.split('\n')
     
-    # ADIM 1: "Soyadı (Unvanı)" etiketinin yanındaki tırnaklı veriyi al
-    # Regex Mantığı: "Soyadı (Unvanı)" bul -> virgülden sonraki "..." içini kap
-    match_soyad = re.search(r'"Soyadı \(Unvanı\)"\s*,\s*"([^"]+)"', text)
-    if match_soyad:
-        isim_tam += match_soyad.group(1).strip()
-    
-    # ADIM 2: "Adı (Unvanın Devamı)" etiketinin yanındaki tırnaklı veriyi al
-    match_ad = re.search(r'"Adı \(Unvanın Devamı\)"\s*,\s*"([^"]+)"', text)
-    if match_ad:
-        isim_tam += " " + match_ad.group(1).strip()
-    
-    # ADIM 3: Eğer yukarıdakiler çalışmazsa (Tırnaksız format), klasik yöntem
-    if len(isim_tam) < 3:
-        lines = text.split('\n')
-        for i, line in enumerate(lines[:50]):
-            clean_line = line.replace('"', '').replace(',', ' ').strip()
-            if "Soyadı (Unvanı)" in clean_line and i+1 < len(lines):
-                candidate = lines[i+1].replace('"', '').replace(',', ' ').strip()
-                # Gereksiz kelimeleri ele
-                if "SMMM" not in candidate and "VERGİ" not in candidate:
-                    isim_tam = candidate
-                    break
-    
-    return isim_tam if len(isim_tam) > 2 else "Bilinmeyen Mükellef"
+    # --- STRATEJİ 1: CSV FORMATI (Tırnaklar) ---
+    # Örnek: "Soyadı (Unvanı)","18 MART..."
+    m1 = re.search(r'"Soyadı \(Unvanı\)"\s*,\s*"([^"]+)"', text)
+    if m1:
+        isim = m1.group(1).strip()
+        # Devamı var mı?
+        m2 = re.search(r'"Adı \(Unvanın Devamı\)"\s*,\s*"([^"]+)"', text)
+        if m2: isim += " " + m2.group(1).strip()
+        return isim
+
+    # --- STRATEJİ 2: ALT SATIR OKUMA (Klasik PDF) ---
+    # Örnek: Soyadı, Adı (Unvanı) [Enter] ZARİF BİÇER
+    for i, line in enumerate(lines[:50]): # İlk 50 satıra bak
+        clean_line = line.strip()
+        if "Soyadı, Adı (Unvanı)" in clean_line or "Soyadı (Unvanı)" in clean_line:
+            if i + 1 < len(lines):
+                aday = lines[i+1].strip()
+                # Adayın geçerliliğini kontrol et (SMMM veya boş değilse)
+                if aday and "SMMM" not in aday and "VERGİ" not in aday:
+                    isim = aday
+                    # Bir alt satırda devamı olabilir mi? (LTD. ŞTİ. gibi)
+                    if i + 2 < len(lines):
+                        aday2 = lines[i+2].strip()
+                        if "ŞTİ" in aday2 or "LTD" in aday2 or "A.Ş" in aday2:
+                            isim += " " + aday2
+                    return isim
+
+    # --- STRATEJİ 3: ANAHTAR KELİME SONRASI ---
+    # Bazen aynı satırdadır: Soyadı (Unvanı): AHMET YILMAZ
+    m3 = re.search(r'Soyadı.*?Unvanı.*?[,:]\s*(.*)', text, re.IGNORECASE)
+    if m3:
+        aday = m3.group(1).strip()
+        if len(aday) > 3: return aday
+
+    return "İsim Okunamadı"
 
 # ==========================================
-# 3. ANA UYGULAMA
+# 3. ARAYÜZ
 # ==========================================
 
-with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/9203/9203764.png", width=80)
-    st.header("KONTROL PANELİ")
-    st.info("KDV Analiz Modülü v5.0\n(Quote/CSV Parser Aktif)")
+st.title("👁️ MÜŞAVİR KULESİ: MATRIX MODU")
+st.markdown("Gelişmiş OCR Motoru: **Aktif** | Regex Motoru: **Agresif**")
 
-st.title("🕵️‍♂️ KDV & POS Uyumsuzluk Dedektörü")
-st.markdown("Yüklenen PDF'teki **'KATMA DEĞER VERGİSİ BEYANNAMESİ'** sayfalarını tespit eder, tırnak içine gizlenmiş isimleri okur ve analizi yapar.")
-
-pdf_up = st.file_uploader("📂 Beyanname PDF Dosyasını Buraya Sürükleyin", type=["pdf"])
+pdf_up = st.file_uploader("📂 PDF DOSYASINI YÜKLE", type=["pdf"])
 
 if pdf_up:
-    if st.button("🚀 SİSTEMİ BAŞLAT", type="primary"):
+    if st.button("SİSTEMİ BAŞLAT", type="primary", use_container_width=True):
         
-        # --- TERMİNAL EKRANI HAZIRLIĞI ---
+        # Terminal Setup
         terminal = st.empty()
         logs = []
-        
-        def log_bas(txt, renk="#00ff41"):
-            t = time.strftime("%H:%M:%S")
-            logs.append(f"<span style='color:#555'>[{t}]</span> <span style='color:{renk}'>{txt}</span>")
-            # Son 15 satırı göster
-            if len(logs) > 15: logs.pop(0)
-            terminal.markdown(f"<div class='terminal-window'>{'<br>'.join(logs)}<br><span class='blink'>_</span></div>", unsafe_allow_html=True)
-            time.sleep(0.02) # Efekt hızı
+        def log(msg, color="#0f0"):
+            logs.append(f"<span style='color:{color}'> > {msg}</span>")
+            if len(logs)>14: logs.pop(0)
+            terminal.markdown(f"<div class='terminal-box'>{'<br>'.join(logs)}</div>", unsafe_allow_html=True)
+            time.sleep(0.01)
 
         sonuclar = []
-        log_bas("Sistem başlatılıyor...", "white")
-        log_bas("OCR motoru ve Regex kütüphanesi yüklendi...", "white")
+        log("Sistem başlatılıyor...", "white")
         
         with pdfplumber.open(pdf_up) as pdf:
-            total_pages = len(pdf.pages)
-            log_bas(f"PDF Tarama Başladı: Toplam {total_pages} sayfa.", "cyan")
+            total = len(pdf.pages)
+            log(f"Toplam {total} sayfa tespit edildi.", "cyan")
             
             for i, page in enumerate(pdf.pages):
                 text = page.extract_text()
                 if not text: continue
                 
-                # SADECE "KATMA DEĞER VERGİSİ BEYANNAMESİ" YAZAN SAYFALARI AL
-                if "KATMA DEĞER VERGİSİ BEYANNAMESİ" in text:
+                # Sadece Beyanname Sayfalarını Al (Gereksiz sayfaları atla)
+                if "KATMA DEĞER VERGİSİ" in text or "MATRAH" in text:
                     
-                    # 1. İSMİ BUL (Yeni Fonksiyon ile)
-                    isim = mukellef_ismini_sok_al(text)
+                    # 1. İSMİ AVLA
+                    bulunan_isim = isim_avcisi(text)
                     
-                    # Terminalde ismi göster (Kullanıcı görsün diye)
-                    if isim != "Bilinmeyen Mükellef":
-                        log_bas(f"✓ MÜKELLEF BULUNDU: {isim}", "#ffff00")
+                    if bulunan_isim != "İsim Okunamadı":
+                        # İsim çok uzunsa kısalt (Log için)
+                        kisa_isim = (bulunan_isim[:25] + '..') if len(bulunan_isim) > 25 else bulunan_isim
+                        log(f"[{i+1}] İsim Çözüldü: {kisa_isim}", "#ffff00")
                     else:
-                        log_bas(f"! İsim okunamadı (Sayfa {i+1})", "red")
+                        # İsim bulunamazsa bile devam et, belki veri vardır
+                        pass
 
                     # 2. VERİLERİ ÇEK
-                    # Matrah
                     m_match = re.search(r"(?:TOPLAM MATRAH|Teslim ve Hizmetlerin Karşılığını).*?([\d\.,]+)", text, re.IGNORECASE)
                     matrah = text_to_float(m_match.group(1)) if m_match else 0.0
                     
-                    # KDV
                     k_match = re.search(r"(?:TOPLAM HESAPLANAN KDV|Hesaplanan KDV Toplamı).*?([\d\.,]+)", text, re.IGNORECASE)
                     kdv = text_to_float(k_match.group(1)) if k_match else 0.0
                     
-                    # POS (Kredi Kartı)
                     pos_match = re.search(r"(?:Kredi Kartı ile Tahsil|Kredi Kartı).*?([\d\.,]+)", text, re.IGNORECASE)
                     pos = text_to_float(pos_match.group(1)) if pos_match else 0.0
                     
-                    # 3. HESAPLAMA (Senin İstediğin Mantık)
-                    # (Matrah + KDV) vs POS
-                    beyan_toplam = matrah + kdv
-                    fark = pos - beyan_toplam
+                    # 3. ANALİZ
+                    beyan = matrah + kdv
+                    fark = pos - beyan
                     
-                    # 50 TL üzeri fark varsa kaydet
                     if fark > 50:
-                        log_bas(f"⚠️ RİSK TESPİTİ! Fark: {int(fark)} TL", "red")
+                        log(f"⚠️ RİSK: {bulunan_isim} (Fark: {int(fark)})", "red")
                         sonuclar.append({
-                            "Mükellef": isim,
+                            "Mükellef": bulunan_isim,
                             "POS": pos,
-                            "Beyan": beyan_toplam,
+                            "Beyan": beyan,
                             "Fark": fark
                         })
-                    else:
-                        # Temizse sadece bilgi geç
-                        # log_bas(f"Durum Temiz.", "#555") 
-                        pass
         
-        log_bas("Analiz tamamlandı. Rapor hazırlanıyor...", "cyan")
+        log("Analiz bitti. Sonuçlar listeleniyor...", "white")
         time.sleep(1)
         st.session_state['sonuclar'] = pd.DataFrame(sonuclar)
-        terminal.empty() # Terminali temizle
+        terminal.empty()
 
-# SONUÇLARI GÖSTER
+# SONUÇLAR
 if st.session_state['sonuclar'] is not None:
     df = st.session_state['sonuclar']
     
     if df.empty:
-        st.success("✅ Mükemmel! Taranan beyannamelerde herhangi bir POS uyumsuzluğu bulunamadı.")
-        st.balloons()
+        st.success("✅ TEMİZ. Hiçbir riskli mükellef bulunamadı.")
     else:
-        st.error(f"🚨 Toplam {len(df)} Adet Riskli Beyanname Tespit Edildi")
+        st.markdown(f"### 🚨 {len(df)} RİSKLİ MÜKELLEF TESPİT EDİLDİ")
         
         for i, row in df.iterrows():
             ad = row['Mükellef']
-            pos_txt = para_formatla(row['POS'])
-            beyan_txt = para_formatla(row['Beyan'])
-            fark_txt = para_formatla(row['Fark'])
+            # İsim okunamadıysa "Bilinmeyen (Sayfa X)" yazsın diye kontrol eklenebilir ama şu an ham veri
+            if ad == "İsim Okunamadı": ad = "BİLİNMEYEN MÜKELLEF (İsim Okunamadı)"
             
             with st.container():
-                col1, col2 = st.columns([0.75, 0.25])
-                
-                with col1:
+                c1, c2 = st.columns([3, 1])
+                with c1:
                     st.markdown(f"""
                     <div class='risk-card'>
-                        <div class='card-head'>🚨 {ad}</div>
-                        <div class='card-sub'>KDV Beyannamesi Analizi</div>
-                        <div style='display:flex; justify-content:space-between; margin-top:15px; background:#222; padding:10px; border-radius:5px;'>
-                            <div><span style='color:#aaa; font-size:12px'>KREDİ KARTI (POS)</span><br><span class='card-val'>{pos_txt}</span></div>
-                            <div><span style='color:#aaa; font-size:12px'>BEYAN (KDV DAHİL)</span><br><span class='card-val'>{beyan_txt}</span></div>
+                        <div class='white-text' style='font-size:20px; font-weight:bold'>{ad}</div>
+                        <div style='display:flex; justify-content:space-between; margin-top:10px;'>
+                            <div><span class='gray-text'>POS CİRO</span><br><span class='big-num'>{para_formatla(row['POS'])}</span></div>
+                            <div><span class='gray-text'>BEYAN (KDV DAHİL)</span><br><span class='big-num'>{para_formatla(row['Beyan'])}</span></div>
                         </div>
-                        <div class='card-alert'>⚠️ EKSİK BEYAN FARKI: {fark_txt}</div>
+                        <div style='margin-top:10px; color:#ff4444; font-weight:bold; border-top:1px solid #333; padding-top:5px'>
+                            EKSİK BEYAN FARKI: {para_formatla(row['Fark'])}
+                        </div>
                     </div>
                     """, unsafe_allow_html=True)
                 
-                with col2:
+                with c2:
                     st.write("")
                     st.write("")
-                    st.write("")
-                    if st.button(f"İHBAR ET 📲", key=f"btn_{i}", type="primary", use_container_width=True):
-                        # MESAJ İÇERİĞİ
+                    if st.button("İHBAR ET 📲", key=f"btn_{i}", use_container_width=True):
                         msg = (f"⚠️ *KDV RİSK RAPORU*\n\n"
-                               f"📄 *Firma:* {ad}\n"
-                               f"💳 *POS Tahsilat:* {pos_txt}\n"
-                               f"📊 *Beyan (Matrah+KDV):* {beyan_txt}\n"
-                               f"‼️ *TESPİT EDİLEN FARK:* {fark_txt}\n\n"
-                               f"Lütfen muhasebe kayıtlarını kontrol ediniz.")
-                        
-                        if whatsapp_gonder(msg):
-                            st.toast("✅ Başarıyla İletildi!", icon="📩")
-                        else:
-                            st.error("Gönderim Başarısız!")
+                               f"Firma: {ad}\nPOS: {para_formatla(row['POS'])}\n"
+                               f"Beyan: {para_formatla(row['Beyan'])}\n"
+                               f"Fark: {para_formatla(row['Fark'])}\n\nKontrol Ediniz.")
+                        if whatsapp_gonder(msg): st.toast("Gönderildi")
+                        else: st.error("Hata")
