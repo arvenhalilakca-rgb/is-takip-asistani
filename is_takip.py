@@ -44,6 +44,8 @@ MESAJ_SABLONLARI = {
 # --- SESSION ---
 if 'hizli_not' not in st.session_state: st.session_state['hizli_not'] = ""
 if 'sessiz_mod' not in st.session_state: st.session_state['sessiz_mod'] = False
+# Excel verilerini hafızada tutmak için
+if 'tasdik_data' not in st.session_state: st.session_state['tasdik_data'] = None
 
 # --- BAĞLANTILAR ---
 try:
@@ -67,9 +69,7 @@ def whatsapp_gonder(chat_id, mesaj):
 def numaralari_ayikla(tel_str):
     if not tel_str: return []
     tel_str = str(tel_str)
-    # Excel'den gelen nan/float değerleri temizle
     if tel_str == "nan" or tel_str == "None": return []
-    
     ham_parcalar = re.split(r'[,\n/]', tel_str)
     temiz = []
     for parca in ham_parcalar:
@@ -104,8 +104,8 @@ with st.sidebar:
     st.markdown("---")
     secim = option_menu(
         menu_title=None,
-        options=["Genel Bakış", "İş Ekle", "İş Yönetimi", "Mesaj Merkezi", "Tasdik & Finans", "Ayarlar"],
-        icons=["house", "plus-circle", "kanban", "chat-dots", "cash-coin", "gear"],
+        options=["Genel Bakış", "İş Ekle", "İş Yönetimi", "Mesaj Merkezi", "Tasdik Robotu", "Ayarlar"],
+        icons=["house", "plus-circle", "kanban", "chat-dots", "robot", "gear"],
         menu_icon="cast", default_index=0,
         styles={"container": {"padding": "0!important", "background-color": "#ffffff"}, "nav-link": {"font-size": "14px"}}
     )
@@ -161,82 +161,127 @@ elif secim == "Mesaj Merkezi":
             for t in numaralari_ayikla(satir.iloc[0]["Telefon"]): whatsapp_gonder(t, msg)
             st.success("Gönderildi!")
 
-# --- 5. TASDİK & FİNANS (EXCEL ENTEGRASYONLU) ---
-elif secim == "Tasdik & Finans":
-    st.title("🧮 Defter Tasdik 2026")
+# --- 5. TASDİK ROBOTU (YENİ SİSTEM) ---
+elif secim == "Tasdik Robotu":
+    st.title("🤖 Tasdik Tahsilat Robotu")
     
-    st.info("💡 'PLANLAMA 2026.xlsx' dosyanızı (Excel olarak) yükleyin.")
+    # 1. DOSYA YÜKLEME KISMI
+    col_up, col_info = st.columns([1, 2])
+    with col_up:
+        uploaded_file = st.file_uploader("Listeyi Yükle (Excel/CSV)", type=["xlsx", "xls", "csv"])
     
-    # EXCEL YÜKLEME ALANI
-    uploaded_file = st.file_uploader("PLANLAMA 2026 Dosyasını Yükle (Excel)", type=["xlsx", "xls"])
-    
+    # Dosya yüklendiğinde ve henüz hafızaya alınmadıysa
     if uploaded_file:
-        try:
-            # EXCEL OKUMA (openpyxl gerekir)
-            df_tasdik = pd.read_excel(uploaded_file)
-            
-            # Gerekli sütunları kontrol et (Ünvan ve Para Alındı mı kritik)
-            if "Ünvan / Ad Soyad" in df_tasdik.columns and "Para Alındı mı" in df_tasdik.columns:
-                
-                # Ödeme durumuna göre ayır (Boş olanlar = Ödemedi)
-                odenmeyenler = df_tasdik[df_tasdik["Para Alındı mı"].isna() | (df_tasdik["Para Alındı mı"] == "")]
-                odeyenler = df_tasdik[df_tasdik["Para Alındı mı"].notna() & (df_tasdik["Para Alındı mı"] != "")]
-                
-                # İstatistikler
-                k1, k2, k3 = st.columns(3)
-                k1.metric("Toplam Mükellef", len(df_tasdik))
-                k2.metric("✅ İşlem Yapılan", len(odeyenler))
-                k3.metric("❌ Ödemeyen (Riskli)", len(odenmeyenler), delta_color="inverse")
-                
-                st.divider()
-                
-                if not odenmeyenler.empty:
-                    st.markdown(f"<div class='borclu-uyari'>🚨 DİKKAT: {len(odenmeyenler)} Mükellef Henüz Ödeme Yapmamış!</div>", unsafe_allow_html=True)
-                    
-                    # Gösterilecek Sütunlar (Varsa göster, yoksa hata verme)
-                    cols_to_show = ["Ünvan / Ad Soyad"]
-                    if "Defter Tasdik Ücreti" in df_tasdik.columns: cols_to_show.append("Defter Tasdik Ücreti")
-                    if "1.NUMARA" in df_tasdik.columns: cols_to_show.append("1.NUMARA")
-                    
-                    st.dataframe(odenmeyenler[cols_to_show], use_container_width=True)
-                    
-                    st.subheader("📲 Borçlulara Toplu WhatsApp Gönder")
-                    mesaj_taslagi = MESAJ_SABLONLARI["Tasdik Ödenmedi (SERT)"]
-                    st.text_area("Gidecek Mesaj:", value=mesaj_taslagi, height=100, disabled=True)
-                    
-                    if st.button("🚀 LİSTEDEKİ HERKESE GÖNDER", type="primary"):
-                        bar = st.progress(0)
-                        basarili = 0
-                        hatali = 0
-                        
-                        for i, row in odenmeyenler.iterrows():
-                            isim = row["Ünvan / Ad Soyad"]
-                            # Telefonu '1.NUMARA' sütunundan al
-                            tel_ham = str(row.get("1.NUMARA", ""))
-                            
-                            tels = numaralari_ayikla(tel_ham)
-                            
-                            if tels:
-                                kisiye_ozel_mesaj = mesaj_taslagi.replace("{isim}", str(isim))
-                                for t in tels:
-                                    whatsapp_gonder(t, kisiye_ozel_mesaj)
-                                basarili += 1
-                            else:
-                                hatali += 1
-                            
-                            bar.progress((i + 1) / len(odenmeyenler))
-                            time.sleep(0.5) # Spam olmaması için bekleme
-                        
-                        st.success(f"İşlem Tamamlandı! {basarili} kişiye mesaj atıldı. ({hatali} kişinin numarası yoktu)")
+        if st.session_state['tasdik_data'] is None:
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    df_raw = pd.read_csv(uploaded_file)
                 else:
-                    st.balloons()
-                    st.success("Harika! Listede ödeme yapmayan kimse yok.")
-            else:
-                st.error("Excel dosyasında 'Ünvan / Ad Soyad' veya 'Para Alındı mı' sütunları bulunamadı.")
-                st.write("Bulunan Sütunlar:", df_tasdik.columns.tolist())
+                    df_raw = pd.read_excel(uploaded_file)
                 
-        except Exception as e:
-            st.error(f"Excel okunurken hata oluştu: {e}")
+                # Gerekli Sütun Kontrolü
+                if "Ünvan / Ad Soyad" in df_raw.columns:
+                    # Yeni bir sütun ekle: "Tahsil_Edildi_Mi"
+                    # Eğer "Para Alındı mı" doluysa True, boşsa False yap
+                    if "Para Alındı mı" in df_raw.columns:
+                        df_raw["Sistem_Tahsilat"] = df_raw["Para Alındı mı"].apply(lambda x: True if pd.notna(x) and str(x).strip() != "" else False)
+                    else:
+                        df_raw["Sistem_Tahsilat"] = False # Sütun yoksa herkes borçlu
+                    
+                    st.session_state['tasdik_data'] = df_raw
+                    st.success("Liste Yüklendi! Şimdi aşağıdan yönetebilirsin.")
+                    st.rerun()
+                else:
+                    st.error("Dosyada 'Ünvan / Ad Soyad' sütunu bulunamadı.")
+            except Exception as e:
+                st.error(f"Hata: {e}")
+
+    # 2. LİSTE YÖNETİMİ
+    if st.session_state['tasdik_data'] is not None:
+        df_islem = st.session_state['tasdik_data']
+        
+        # Filtreleme (Sadece Borçluları Göster veya Tümü)
+        gosterim_modu = st.radio("Görünüm:", ["Sadece Ödemeyenleri Göster (İşlem Yapılacaklar)", "Tüm Listeyi Göster"], horizontal=True)
+        
+        if "Sadece" in gosterim_modu:
+            # Sadece ödememiş olanları (False) filtrele
+            df_goster = df_islem[df_islem["Sistem_Tahsilat"] == False]
+        else:
+            df_goster = df_islem
+
+        st.markdown("##### 👇 Ödemesini aldığınız kişilerin yanındaki kutucuğu işaretleyin:")
+        
+        # EDİTÖR: KULLANICININ TİK ATABİLECEĞİ ALAN
+        # num_rows="dynamic" kapalı, sadece var olanları düzenle
+        edited_df = st.data_editor(
+            df_goster,
+            column_config={
+                "Sistem_Tahsilat": st.column_config.CheckboxColumn(
+                    "Tahsil Edildi mi?",
+                    help="Ödeme alındıysa işaretleyin, listeden düşsün.",
+                    default=False,
+                ),
+                "Ünvan / Ad Soyad": st.column_config.TextColumn("Mükellef", disabled=True),
+                "1.NUMARA": st.column_config.TextColumn("Telefon", disabled=True),
+                "Defter Tasdik Ücreti": st.column_config.NumberColumn("Tutar", disabled=True)
+            },
+            disabled=["Ünvan / Ad Soyad", "1.NUMARA", "Para Alındı mı", "Vergi Dairesi"], # Sadece checkbox değişsin
+            hide_index=True,
+            use_container_width=True
+        )
+
+        # DEĞİŞİKLİKLERİ KAYDETME MANTIĞI
+        # Streamlit data_editor, edited_df içinde değişiklikleri tutar.
+        # Bunu ana session_state'e geri yazmamız lazım.
+        
+        if st.button("💾 Değişiklikleri Kaydet & Listeyi Güncelle"):
+            # Güncellenmiş satırları ana veriye işle
+            # Index üzerinden eşleştirme yapıyoruz
+            st.session_state['tasdik_data'].update(edited_df)
+            st.success("Liste Güncellendi! Ödeyenler mesaj listesinden çıkarıldı.")
+            st.rerun()
+
+        st.divider()
+
+        # 3. MESAJ GÖNDERME ALANI
+        # Mesaj sadece "Sistem_Tahsilat" == False olanlara gidecek
+        kalan_borclular = st.session_state['tasdik_data'][st.session_state['tasdik_data']["Sistem_Tahsilat"] == False]
+        
+        st.markdown(f"<div class='borclu-uyari'>🚨 Mesaj Gönderilecek Kişi Sayısı: {len(kalan_borclular)}</div>", unsafe_allow_html=True)
+        
+        mesaj_taslagi = st.text_area("Gidecek Mesaj Şablonu:", value=MESAJ_SABLONLARI["Tasdik Ödenmedi (SERT)"], height=100)
+        
+        if st.button("🚀 KALAN BORÇLULARA MESAJI GÖNDER", type="primary"):
+            if len(kalan_borclular) > 0:
+                bar = st.progress(0)
+                basarili = 0
+                hatali = 0
+                
+                for i, row in kalan_borclular.iterrows():
+                    isim = row["Ünvan / Ad Soyad"]
+                    tel_ham = str(row.get("1.NUMARA", ""))
+                    
+                    tels = numaralari_ayikla(tel_ham)
+                    
+                    if tels:
+                        kisiye_ozel_mesaj = mesaj_taslagi.replace("{isim}", str(isim))
+                        for t in tels:
+                            whatsapp_gonder(t, kisiye_ozel_mesaj)
+                        basarili += 1
+                    else:
+                        hatali += 1
+                    
+                    bar.progress((i + 1) / len(kalan_borclular))
+                    time.sleep(0.5)
+                
+                st.success(f"Tamamlandı! {basarili} kişiye mesaj gönderildi.")
+            else:
+                st.success("Gönderilecek kimse kalmadı, herkes ödemiş! 🎉")
+
+    # Temizle Butonu
+    if st.button("🔄 Yeni Liste Yüklemek İçin Sıfırla"):
+        st.session_state['tasdik_data'] = None
+        st.rerun()
 
 # --- 6. AYARLAR ---
 elif secim == "Ayarlar":
