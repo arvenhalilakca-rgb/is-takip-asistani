@@ -1,6 +1,4 @@
 import streamlit as st
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import requests
 import pandas as pd
 import re
@@ -10,7 +8,7 @@ import pdfplumber
 import io
 
 # ==========================================
-# 1. AYARLAR VE CSS (GÖRSEL TASARIM)
+# 1. AYARLAR VE YAPILANDIRMA
 # ==========================================
 st.set_page_config(
     page_title="Müşavir İletişim Kulesi",
@@ -19,77 +17,56 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# API Bilgileri
+# API ve Sabit Ayarlar
+# Buraya kendi Instance ve Token bilgilerinizi girin veya st.secrets kullanın
 ID_INSTANCE = st.secrets.get("ID_INSTANCE", "YOUR_INSTANCE_ID")
 API_TOKEN = st.secrets.get("API_TOKEN", "YOUR_API_TOKEN")
 SABIT_IHBAR_NO = "905351041616"  # İhbarların gideceği sabit numara
 
-# CSS
+# Görsel Tasarım (CSS)
 st.markdown("""
     <style>
-    .stApp {background-color: #F2F6FC; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;}
+    .stApp {background-color: #F2F6FC; font-family: 'Segoe UI', sans-serif;}
     [data-testid="stSidebar"] {background-color: #FFFFFF; border-right: 1px solid #E0E0E0;}
     
-    /* Risk Kartları (KDV) */
+    /* Risk Kartı Tasarımı */
     .risk-karti {
-        background-color: #ffffff; padding: 15px; border-radius: 12px; 
-        border-left: 6px solid #d32f2f; margin-bottom: 15px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        background-color: #ffffff; padding: 20px; border-radius: 12px; 
+        border-left: 8px solid #d32f2f; margin-bottom: 20px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
     }
-    .temiz-karti {
-        background-color: #e8f5e9; padding: 10px; border-radius: 12px; 
-        border-left: 6px solid #2ecc71; margin-bottom: 5px; opacity: 0.8;
-    }
+    .risk-baslik {font-size: 18px; font-weight: bold; color: #b71c1c; margin-bottom: 10px;}
+    .risk-detay {font-size: 15px; color: #333; margin-bottom: 5px;}
+    .risk-fark {font-size: 16px; font-weight: bold; color: #d32f2f; margin-top: 10px; border-top: 1px solid #eee; padding-top:10px;}
     
-    /* WhatsApp Balonu */
-    .chat-container {background-color: #e5ddd5; padding: 20px; border-radius: 15px; border: 1px solid #d1d7db; min-height: 250px;}
-    .message-bubble {background-color: #dcf8c6; padding: 10px 15px; border-radius: 8px; box-shadow: 0 1px 1px rgba(0,0,0,0.1); max-width: 80%; margin-bottom: 10px; position: relative; float: right; clear: both; color: #303030;}
-    
-    /* Terminal */
-    .terminal-window {
-        background-color: #1e1e1e; color: #00ff00; font-family: 'Courier New', Courier, monospace;
-        padding: 15px; border-radius: 10px; font-size: 14px; height: 200px; overflow-y: auto;
-        border: 2px solid #333;
-    }
+    /* Mesaj Balonu */
+    .chat-container {background-color: #e5ddd5; padding: 20px; border-radius: 10px; border: 1px solid #ddd;}
+    .message-bubble {background-color: #dcf8c6; padding: 10px; border-radius: 8px; color: #303030; display: inline-block;}
     </style>
     """, unsafe_allow_html=True)
 
-# --- SESSION STATE ---
+# Session State (Veri Saklama)
 if 'analiz_sonuclari' not in st.session_state: st.session_state['analiz_sonuclari'] = None
-if 'analiz_log' not in st.session_state: st.session_state['analiz_log'] = ""
 if 'tasdik_data' not in st.session_state: st.session_state['tasdik_data'] = None
 
-# --- MESAJ ŞABLONLARI ---
+# Mesaj Şablonları
 MESAJ_SABLONLARI = {
     "Serbest Metin": "",
-    "KDV Tahakkuk": "Sayın {isim}, {ay} dönemi KDV beyannameniz onaylanmıştır. Tahakkuk fişiniz ektedir. Ödemenizi vadesinde yapmanızı rica ederiz.",
-    "Tasdik Ödenmedi (RESMİ UYARI)": "Sayın Mükellefimiz {isim}, Defter Tasdik ve Yazılım Giderleri ücretiniz ({tutar} TL) ödenmediği için defterleriniz notere teslim EDİLMEMİŞTİR. Mağduriyet yaşamamanız için ödemenizi bekliyoruz.",
+    "KDV Tahakkuk Bilgisi": "Sayın {isim}, {ay} dönemi KDV beyannameniz onaylanmıştır. Ödemenizi vadesinde yapmanızı rica ederiz.",
+    "Tasdik Borcu Uyarısı": "Sayın Mükellefimiz {isim}, Defter Tasdik borcunuz ({tutar} TL) bulunmaktadır. Ödeme yapılmadığı takdirde defter teslimi yapılamayacaktır.",
 }
 
 # ==========================================
-# 2. YARDIMCI FONKSİYONLAR
+# 2. FONKSİYONLAR
 # ==========================================
-def whatsapp_text_gonder(chat_id, mesaj):
-    chat_id = str(chat_id).replace(" ", "").replace("+", "")
-    if "@" not in chat_id: chat_id = f"{chat_id}@c.us"
-    url = f"https://api.green-api.com/waInstance{ID_INSTANCE}/sendMessage/{API_TOKEN}"
-    try:
-        response = requests.post(url, json={'chatId': chat_id, 'message': mesaj})
-        return response.status_code == 200
-    except: return False
 
-def whatsapp_dosya_gonder(chat_id, dosya, dosya_adi, mesaj=""):
-    chat_id = str(chat_id).replace(" ", "").replace("+", "")
-    if "@" not in chat_id: chat_id = f"{chat_id}@c.us"
-    url = f"https://api.green-api.com/waInstance{ID_INSTANCE}/sendFileByUpload/{API_TOKEN}"
-    try:
-        files = {'file': (dosya_adi, dosya.getvalue())}
-        data = {'chatId': chat_id, 'fileName': dosya_adi, 'caption': mesaj}
-        response = requests.post(url, files=files, data=data)
-        return response.status_code == 200
-    except: return False
+def clean_text(text):
+    """Metni tırnak, virgül vb. karakterlerden temizler."""
+    if not text: return ""
+    return text.replace('"', '').replace(',', ' ').strip()
 
 def text_to_float(text):
+    """Metni sayıya çevirir (1.000,00 formatı)."""
     try:
         clean = re.sub(r'[^\d,\.]', '', str(text)).strip()
         if "," in clean and "." in clean: clean = clean.replace(".", "").replace(",", ".")
@@ -98,228 +75,270 @@ def text_to_float(text):
     except: return 0.0
 
 def para_formatla(deger):
+    """Parayı TL formatına çevirir."""
     return "{:,.2f} TL".format(deger).replace(",", "X").replace(".", ",").replace("X", ".")
 
-def numaralari_ayikla(tel_str):
-    if not tel_str: return []
-    tel_str = str(tel_str)
-    if tel_str == "nan": return []
-    ham = re.split(r'[,\n/]', tel_str)
-    temiz = []
-    for p in ham:
-        sadece_rakam = re.sub(r'\D', '', p)
-        if len(sadece_rakam) == 10: temiz.append("90" + sadece_rakam)
-        elif len(sadece_rakam) == 11 and sadece_rakam.startswith("0"): temiz.append("9" + sadece_rakam)
-    return temiz
+def whatsapp_gonder(numara, mesaj):
+    """WhatsApp mesajı gönderir."""
+    if numara == "905351041616": # Sabit numara formatı zaten doğru
+        chat_id = f"{numara}@c.us"
+    else:
+        # Diğer numaralar için temizlik
+        numara = re.sub(r'\D', '', str(numara))
+        if len(numara) == 10: numara = "90" + numara
+        elif len(numara) == 11 and numara.startswith("0"): numara = "9" + numara
+        chat_id = f"{numara}@c.us"
 
-# ==========================================
-# 3. MENÜ VE SAYFALAR
-# ==========================================
+    url = f"https://api.green-api.com/waInstance{ID_INSTANCE}/sendMessage/{API_TOKEN}"
+    try:
+        payload = {'chatId': chat_id, 'message': mesaj}
+        response = requests.post(url, json=payload)
+        return response.status_code == 200
+    except: return False
 
-# Yan Menü (Sidebar)
-with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=70)
-    st.title("Müşavir Kulesi")
-    secim = st.radio("MENÜ", ["KDV Analiz Robotu", "Profesyonel Mesaj", "Tasdik Robotu", "Veri Yükle"])
-
-# --- SAYFA 1: VERİ YÜKLEME ---
-if secim == "Veri Yükle":
-    st.title("📂 Müşteri Veritabanı")
-    st.info("Müşteri listesini (Excel) buradan yükleyiniz.")
+def mukellef_ismi_bul(text):
+    """Karmaşık PDF yapısından Mükellef ismini (Soyadı + Adı/Unvan Devamı) çeker."""
+    lines = text.split('\n')
+    part1 = ""
+    part2 = ""
     
-    up = st.file_uploader("Müşteri Listesi (Excel)", type=["xlsx", "xls"])
-    if up:
+    # İlk 60 satırı tara
+    limit = min(len(lines), 60)
+    
+    for i in range(limit):
+        clean_line = clean_text(lines[i])
+        
+        # 1. Parça: Soyadı (Unvanı)
+        if "Soyadı (Unvanı)" in clean_line:
+            # Genellikle değer bir alt satırdadır
+            if i + 1 < limit:
+                val = clean_text(lines[i+1])
+                # Müşavir veya Vergi dairesi bilgisi değilse al
+                if "SMMM" not in val and "VERGİ" not in val and "MÜDÜR" not in val:
+                    part1 = val
+        
+        # 2. Parça: Adı (Unvanın Devamı)
+        if "Adı (Unvanın Devamı)" in clean_line:
+            if i + 1 < limit:
+                val = clean_text(lines[i+1])
+                part2 = val
+                
+    full_name = f"{part1} {part2}".strip()
+    
+    # Eğer boşsa veya yanlışlıkla müşavir ismi geldiyse regex dene
+    if not full_name or "SMMM" in full_name:
         try:
-            df = pd.read_excel(up)
-            # Veri temizliği
-            if "Para Alındı mı" in df.columns: 
-                df["Tahsil_Edildi"] = df["Para Alındı mı"].apply(lambda x: True if pd.notna(x) and str(x).strip() != "" else False)
-            else: df["Tahsil_Edildi"] = False
-            
-            st.session_state['tasdik_data'] = df
-            st.success(f"✅ {len(df)} Müşteri Kaydı Yüklendi.")
-            st.dataframe(df.head())
-        except Exception as e: st.error(f"Hata: {e}")
+            # Yedek Yöntem: Regex ile tırnak içindeki veriyi al
+            m = re.search(r'"Soyadı \(Unvanı\)"\s*,\s*"([^"]+)"', text)
+            if m: full_name = m.group(1)
+        except: pass
+        
+    return full_name if full_name else "İsim Okunamadı"
 
-# --- SAYFA 2: KDV ANALİZ ROBOTU (GÜNCELLENMİŞ MANTIK) ---
-elif secim == "KDV Analiz Robotu":
-    st.title("🕵️‍♂️ KDV Analiz & İhbar Robotu")
-    st.markdown("**Formül:** (Matrah + Hesaplanan KDV) ile (Kredi Kartı Tahsilatı) karşılaştırılır.")
+# ==========================================
+# 3. ANA UYGULAMA VE MENÜLER
+# ==========================================
+
+# Yan Menü
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=80)
+    st.title("Müşavir Kulesi")
+    secim = st.radio("İŞLEM SEÇİNİZ", ["KDV Analiz Robotu", "Veri Yükle", "Profesyonel Mesaj", "Tasdik Robotu"])
+    st.markdown("---")
+    st.info("v3.0 - Tek Parça Sürüm")
+
+# --- 1. KDV ANALİZ ROBOTU ---
+if secim == "KDV Analiz Robotu":
+    st.title("🕵️‍♂️ KDV Analiz & İhbar Sistemi")
+    st.markdown("""
+    **Analiz Mantığı:** 1. `(Matrah + Hesaplanan KDV)` toplanır.
+    2. `Kredi Kartı (POS)` tutarı ile karşılaştırılır.
+    3. Eğer **POS > (Matrah + KDV)** ise risk uyarısı verir.
+    """)
     
-    pdf_up = st.file_uploader("KDV Beyannamesi (PDF)", type=["pdf"])
+    pdf_up = st.file_uploader("KDV Beyannamesi Yükle (PDF)", type=["pdf"])
     
     if pdf_up:
         if st.button("🚀 ANALİZİ BAŞLAT", type="primary"):
-            progress_bar = st.progress(0)
-            status = st.empty()
-            terminal_logs = []
+            progress = st.progress(0)
             sonuclar = []
             
             with pdfplumber.open(pdf_up) as pdf:
-                total = len(pdf.pages)
+                total_pages = len(pdf.pages)
                 for i, page in enumerate(pdf.pages):
-                    progress_bar.progress((i+1)/total)
+                    progress.progress((i+1)/total_pages)
                     text = page.extract_text()
                     if not text: continue
                     
-                    # 1. İsim Bulma (Müşavir Hariç)
-                    lines = text.split('\n')
-                    musteri_adi = "Bilinmeyen"
-                    # Sayfanın üst kısmında ara
-                    limit = len(lines)
-                    for idx, line in enumerate(lines):
-                        if "BEYANNAMEYİ DÜZENLEYEN" in line: limit = idx; break
+                    # A) İsim Bul
+                    isim = mukellef_ismi_bul(text)
                     
-                    for idx, line in enumerate(lines[:limit]):
-                        if "Soyadı (Unvanı)" in line or "Unvanı" in line:
-                            if idx + 1 < limit:
-                                candidate = lines[idx+1].strip()
-                                if "SMMM" not in candidate and "MÜŞAVİR" not in candidate:
-                                    musteri_adi = candidate
-                                    break
+                    # B) Verileri Çek (Regex)
+                    # Matrah
+                    m_match = re.search(r"(?:TOPLAM MATRAH|Teslim ve Hizmetlerin Karşılığını).*?([\d\.,]+)", text, re.IGNORECASE)
+                    matrah = text_to_float(m_match.group(1)) if m_match else 0.0
                     
-                    # 2. Veriler
-                    matrah_match = re.search(r"(?:TOPLAM MATRAH|Teslim ve Hizmetlerin Karşılığını).*?([\d\.,]+)", text, re.IGNORECASE)
-                    matrah = text_to_float(matrah_match.group(1)) if matrah_match else 0.0
+                    # KDV (Toplam Hesaplanan)
+                    k_match = re.search(r"(?:TOPLAM HESAPLANAN KDV|Hesaplanan KDV Toplamı).*?([\d\.,]+)", text, re.IGNORECASE)
+                    kdv = text_to_float(k_match.group(1)) if k_match else 0.0
                     
-                    kdv_match = re.search(r"(?:TOPLAM HESAPLANAN KDV|Hesaplanan KDV Toplamı).*?([\d\.,]+)", text, re.IGNORECASE)
-                    hesaplanan_kdv = text_to_float(kdv_match.group(1)) if kdv_match else 0.0
-                    
+                    # Kredi Kartı (POS)
                     kk_match = re.search(r"(?:Kredi Kartı ile Tahsil|Kredi Kartı).*?([\d\.,]+)", text, re.IGNORECASE)
-                    kk_tutar = text_to_float(kk_match.group(1)) if kk_match else 0.0
+                    pos = text_to_float(kk_match.group(1)) if kk_match else 0.0
                     
-                    # 3. YENİ FORMÜL (Özel Matrah Yok)
-                    beyan_toplam = matrah + hesaplanan_kdv
-                    fark = kk_tutar - beyan_toplam
+                    # C) Hesaplama
+                    # İstediğin Mantık: Matrah + KDV vs POS
+                    beyan_toplam = matrah + kdv
+                    fark = pos - beyan_toplam
                     
-                    durum = "RİSKLİ" if fark > 50 else "TEMİZ"
-                    
-                    if durum == "RİSKLİ":
+                    # 50 TL Tolerans
+                    if fark > 50:
                         sonuclar.append({
-                            "Mükellef": musteri_adi, "Matrah": matrah, "KDV": hesaplanan_kdv,
-                            "Beyan_Toplam": beyan_toplam, "KK_Tutar": kk_tutar, "Fark": fark
+                            "Mükellef": isim,
+                            "Matrah": matrah,
+                            "KDV": kdv,
+                            "Beyan_Toplam": beyan_toplam,
+                            "POS": pos,
+                            "Fark": fark
                         })
             
             st.session_state['analiz_sonuclari'] = pd.DataFrame(sonuclar)
-            status.success("✅ Analiz Bitti!")
-            time.sleep(0.5)
             st.rerun()
 
-    # SONUÇ EKRANI
+    # Sonuç Ekranı
     if st.session_state['analiz_sonuclari'] is not None:
-        df_res = st.session_state['analiz_sonuclari']
+        df = st.session_state['analiz_sonuclari']
         
-        if df_res.empty:
-            st.success("Taranan dosyalarda riskli durum yok.")
+        if df.empty:
+            st.success("✅ Taranan dosyalarda herhangi bir KDV/POS uyumsuzluğu bulunamadı.")
         else:
-            st.error(f"🚨 {len(df_res)} Riskli Beyanname Tespit Edildi")
+            st.error(f"🚨 {len(df)} Adet Riskli Beyanname Tespit Edildi!")
             
-            for i, row in df_res.iterrows():
+            for i, row in df.iterrows():
+                # Değişkenler
                 ad = row['Mükellef']
-                kk = para_formatla(row['KK_Tutar'])
-                beyan = para_formatla(row['Beyan_Toplam'])
-                fark = para_formatla(row['Fark'])
+                pos_str = para_formatla(row['POS'])
+                beyan_str = para_formatla(row['Beyan_Toplam'])
+                fark_str = para_formatla(row['Fark'])
                 
+                # Kart Yapısı
                 with st.container():
-                    c1, c2 = st.columns([3, 1])
-                    with c1:
+                    col1, col2 = st.columns([3, 1])
+                    
+                    with col1:
                         st.markdown(f"""
                         <div class='risk-karti'>
-                            <h4 style='margin:0; color:#c62828'>🚨 {ad}</h4>
-                            <p style='margin:5px 0 0 0; color:#555'>
-                                <b>POS:</b> {kk} | <b>Beyan (KDV Dahil):</b> {beyan}
-                            </p>
-                            <p style='margin-top:5px; font-weight:bold; color:#d32f2f'>EKSİK BEYAN FARKI: {fark}</p>
+                            <div class='risk-baslik'>🚨 {ad}</div>
+                            <div class='risk-detay'>
+                                <b>💳 POS Tahsilat:</b> {pos_str}<br>
+                                <b>📄 Beyan (Matrah+KDV):</b> {beyan_str}
+                            </div>
+                            <div class='risk-fark'>⚠️ EKSİK BEYAN FARKI: {fark_str}</div>
                         </div>
                         """, unsafe_allow_html=True)
                     
-                    with c2:
-                        st.write("")
-                        st.write("")
-                        # Sadece SABİT NUMARA İHBAR
-                        if st.button(f"🚨 İHBAR ET", key=f"btn_{i}", type="primary", use_container_width=True):
+                    with col2:
+                        st.write("") # Hizalama boşluğu
+                        st.info("📞 İhbar Hattı:\n**0535 104 16 16**")
+                        
+                        if st.button("🚨 İHBAR ET", key=f"btn_{i}", type="primary", use_container_width=True):
+                            # Mesaj Hazırla
                             msg = (f"⚠️ *KDV UYUMSUZLUK RAPORU*\n\n"
-                                   f"Firma: {ad}\nPOS: {kk}\nBeyan: {beyan}\n"
-                                   f"Fark: {fark}\n\nKontrol ediniz.")
+                                   f"Firma: {ad}\n"
+                                   f"POS Tahsilat: {pos_str}\n"
+                                   f"Beyan (Dahil): {beyan_str}\n"
+                                   f"Fark: {fark_str}\n\n"
+                                   f"Lütfen kontrol ediniz.")
                             
-                            ok = whatsapp_text_gonder(SABIT_IHBAR_NO, msg)
-                            if ok: st.toast("İhbar İletildi! ✅")
-                            else: st.error("API Hatası!")
+                            # Gönder
+                            if whatsapp_gonder(SABIT_IHBAR_NO, msg):
+                                st.toast(f"İhbar İletildi: {ad} ✅")
+                            else:
+                                st.error("Gönderim Başarısız (API Hatası)")
 
-# --- SAYFA 3: PROFESYONEL MESAJ ---
+# --- 2. VERİ YÜKLEME ---
+elif secim == "Veri Yükle":
+    st.title("📂 Müşteri Veritabanı")
+    st.info("Müşteri listesini (Excel) buradan yükleyerek diğer modülleri aktif edebilirsiniz.")
+    
+    up = st.file_uploader("Excel Dosyası Yükle", type=["xlsx", "xls"])
+    if up:
+        try:
+            df = pd.read_excel(up)
+            # Kolon kontrolü ve temizliği
+            if "Para Alındı mı" in df.columns:
+                df["Tahsil_Edildi"] = df["Para Alındı mı"].apply(lambda x: True if pd.notna(x) and str(x).strip() != "" else False)
+            else:
+                df["Tahsil_Edildi"] = False
+            
+            st.session_state['tasdik_data'] = df
+            st.success(f"✅ {len(df)} Müşteri Kaydı Başarıyla Yüklendi.")
+            st.dataframe(df.head())
+        except Exception as e:
+            st.error(f"Dosya okuma hatası: {e}")
+
+# --- 3. PROFESYONEL MESAJ ---
 elif secim == "Profesyonel Mesaj":
-    st.title("📤 Mesaj Merkezi")
+    st.title("📤 Toplu Mesaj Merkezi")
     
     if st.session_state['tasdik_data'] is None:
-        st.warning("Lütfen önce veri yükleyiniz.")
+        st.warning("⚠️ Lütfen önce 'Veri Yükle' menüsünden müşteri listenizi yükleyin.")
     else:
         df_m = st.session_state['tasdik_data']
-        col1, col2 = st.columns([1,1])
-        
-        with col1:
-            tur = st.radio("Gönderim Türü", ["Tek Kişi", "Toplu Gönderim"], horizontal=True)
-            if tur == "Tek Kişi":
-                secilen = [st.selectbox("Müşteri Seç", df_m["Ünvan / Ad Soyad"].unique())]
-            else:
-                secilen = df_m["Ünvan / Ad Soyad"].tolist()
-            
-            sablon = st.selectbox("Şablon", list(MESAJ_SABLONLARI.keys()))
-            icerik = st.text_area("Mesaj", value=MESAJ_SABLONLARI[sablon], height=150)
-            
-            dosya_ekle = st.toggle("Dosya Ekle")
-            up_f = st.file_uploader("Dosya", type=["pdf","jpg","png"]) if dosya_ekle else None
-
-        with col2:
-            st.subheader("Önizleme")
-            orn_isim = secilen[0] if secilen else "İsim"
-            final_msg = icerik.replace("{isim}", str(orn_isim)).replace("{ay}", "Cari Ay")
-            
-            st.markdown(f"""<div class='chat-container'><div class='message-bubble'>{final_msg}</div></div>""", unsafe_allow_html=True)
-            
-            if st.button("GÖNDER", type="primary"):
-                bar = st.progress(0)
-                for idx, m in enumerate(secilen):
-                    row = df_m[df_m["Ünvan / Ad Soyad"]==m].iloc[0]
-                    tel = row.get("1.NUMARA", "")
-                    msg_real = icerik.replace("{isim}", str(m)).replace("{ay}", datetime.now().strftime("%B"))
-                    
-                    for t in numaralari_ayikla(tel):
-                        if up_f: 
-                            up_f.seek(0)
-                            whatsapp_dosya_gonder(t, up_f, up_f.name, msg_real)
-                        else: 
-                            whatsapp_text_gonder(t, msg_real)
-                    bar.progress((idx+1)/len(secilen))
-                st.success("Gönderim Tamamlandı.")
-
-# --- SAYFA 4: TASDİK ROBOTU ---
-elif secim == "Tasdik Robotu":
-    st.title("🤖 Tasdik Takip")
-    
-    if st.session_state['tasdik_data'] is None:
-        st.warning("Veri yükleyiniz.")
-    else:
-        df = st.session_state['tasdik_data']
-        borclular = df[df["Tahsil_Edildi"]==False]
         
         c1, c2 = st.columns(2)
-        c1.metric("Ödemeyen", len(borclular))
-        c2.metric("Tahsil Edilen", len(df)-len(borclular))
+        with c1:
+            hedef = st.selectbox("Kime Gönderilecek?", ["Seçiniz..."] + df_m["Ünvan / Ad Soyad"].tolist())
+            sablon = st.selectbox("Şablon Seç", list(MESAJ_SABLONLARI.keys()))
+            txt = st.text_area("Mesaj İçeriği", value=MESAJ_SABLONLARI[sablon], height=150)
+            
+        with c2:
+            st.subheader("Önizleme")
+            preview_text = txt.replace("{isim}", hedef if hedef != "Seçiniz..." else "Müşteri Adı").replace("{ay}", "Cari Ay")
+            st.markdown(f"<div class='chat-container'><div class='message-bubble'>{preview_text}</div></div>", unsafe_allow_html=True)
+            
+            if st.button("GÖNDER", type="primary"):
+                if hedef == "Seçiniz...":
+                    st.error("Müşteri seçmediniz.")
+                else:
+                    # Gerçek gönderim simülasyonu (Numara excelden çekilir)
+                    row = df_m[df_m["Ünvan / Ad Soyad"] == hedef].iloc[0]
+                    tel = row.get("1.NUMARA", "") # Excel kolon adı
+                    if whatsapp_gonder(tel, preview_text):
+                        st.success("Mesaj Gönderildi! ✅")
+                    else:
+                        st.error("Gönderilemedi (API veya Numara Hatası)")
+
+# --- 4. TASDİK ROBOTU ---
+elif secim == "Tasdik Robotu":
+    st.title("🤖 Tasdik Takip Sistemi")
+    
+    if st.session_state['tasdik_data'] is None:
+        st.warning("⚠️ Lütfen önce 'Veri Yükle' menüsünden müşteri listenizi yükleyin.")
+    else:
+        df_t = st.session_state['tasdik_data']
+        borclular = df_t[df_t["Tahsil_Edildi"] == False]
         
-        st.subheader("Ödeme İşle / Uyarı Gönder")
+        col1, col2 = st.columns(2)
+        col1.metric("🔴 Ödemeyen Mükellef", len(borclular))
+        col2.metric("🟢 Tahsil Edilen", len(df_t) - len(borclular))
+        
+        st.divider()
+        st.subheader("Borçlu Listesi & Aksiyon")
         
         for i, row in borclular.iterrows():
-            with st.expander(f"🔴 {row['Ünvan / Ad Soyad']} - {row.get('Defter Tasdik Ücreti', 0)} TL"):
-                c_a, c_b = st.columns(2)
-                if c_a.button("ÖDENDİ İŞARETLE", key=f"ode_{i}"):
+            with st.expander(f"{row['Ünvan / Ad Soyad']} - {row.get('Defter Tasdik Ücreti', 0)} TL"):
+                c_btn1, c_btn2 = st.columns(2)
+                
+                if c_btn1.button("✅ ÖDENDİ İŞARETLE", key=f"pay_{i}"):
                     st.session_state['tasdik_data'].at[i, "Tahsil_Edildi"] = True
                     st.rerun()
-                
-                if c_b.button("UYARI AT", key=f"uyr_{i}"):
-                    msg = MESAJ_SABLONLARI["Tasdik Ödenmedi (RESMİ UYARI)"].format(
-                        isim=row['Ünvan / Ad Soyad'], tutar=row.get('Defter Tasdik Ücreti',0)
+                    
+                if c_btn2.button("📩 BORÇ UYARISI AT", key=f"msg_{i}"):
+                    msg = MESAJ_SABLONLARI["Tasdik Borcu Uyarısı"].format(
+                        isim=row['Ünvan / Ad Soyad'], 
+                        tutar=row.get('Defter Tasdik Ücreti', 0)
                     )
                     tel = row.get("1.NUMARA", "")
-                    for t in numaralari_ayikla(tel): whatsapp_text_gonder(t, msg)
-                    st.toast("Uyarı Gitti")
-
+                    whatsapp_gonder(tel, msg)
+                    st.toast("Uyarı Gönderildi")
