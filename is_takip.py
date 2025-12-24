@@ -219,11 +219,16 @@ elif secim == "KDV Analiz Robotu":
             st.warning("Veri okunamadı. PDF'in 'aranabilir metin' formatında olduğundan emin olun.")
         else:
             sadece_risk = st.checkbox("Sadece Hatalı (Riskli) Olanları Göster", value=True)
-            df_goster = df_res[df_res["Durum"] == "RİSKLİ"] if sadece_risk and "Durum" in df_res.columns else df_res
-            
+            # Kolon kontrolü
+            if "Durum" in df_res.columns:
+                df_goster = df_res[df_res["Durum"] == "RİSKLİ"] if sadece_risk else df_res
+            else:
+                df_goster = df_res
+
             c1, c2 = st.columns(2)
             c1.metric("Taranan", len(df_res))
-            c2.metric("🚨 Riskli", len(df_res[df_res["Durum"]=="RİSKLİ"]) if "Durum" in df_res.columns else 0)
+            risk_sayisi = len(df_res[df_res["Durum"]=="RİSKLİ"]) if "Durum" in df_res.columns else 0
+            c2.metric("🚨 Riskli", risk_sayisi)
             st.divider()
             
             if not df_goster.empty:
@@ -237,6 +242,7 @@ elif secim == "KDV Analiz Robotu":
                     personel_adi = "Yetkili"
                     if st.session_state['tasdik_data'] is not None:
                         d = st.session_state['tasdik_data']
+                        # Basit isim eşleşmesi
                         match = d[d["Ünvan / Ad Soyad"].str.contains(str(musteri)[:10], case=False, na=False)]
                         if not match.empty and "Sorumlu" in d.columns: personel_adi = match.iloc[0]["Sorumlu"]
                     
