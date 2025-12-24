@@ -161,21 +161,21 @@ elif secim == "Mesaj Merkezi":
             for t in numaralari_ayikla(satir.iloc[0]["Telefon"]): whatsapp_gonder(t, msg)
             st.success("Gönderildi!")
 
-# --- 5. TASDİK & FİNANS (CSV ENTEGRASYONLU) ---
+# --- 5. TASDİK & FİNANS (EXCEL ENTEGRASYONLU) ---
 elif secim == "Tasdik & Finans":
     st.title("🧮 Defter Tasdik 2026")
     
-    st.info("💡 'PLANLAMA 2026' CSV dosyanızı yükleyin. Sistem 'Para Alındı mı' sütunu boş olanları borçlu sayar.")
+    st.info("💡 'PLANLAMA 2026.xlsx' dosyanızı (Excel olarak) yükleyin.")
     
-    # CSV YÜKLEME ALANI
-    uploaded_file = st.file_uploader("PLANLAMA 2026 Dosyasını Yükle (CSV)", type="csv")
+    # EXCEL YÜKLEME ALANI
+    uploaded_file = st.file_uploader("PLANLAMA 2026 Dosyasını Yükle (Excel)", type=["xlsx", "xls"])
     
     if uploaded_file:
         try:
-            # CSV OKUMA
-            df_tasdik = pd.read_csv(uploaded_file)
+            # EXCEL OKUMA (openpyxl gerekir)
+            df_tasdik = pd.read_excel(uploaded_file)
             
-            # Gerekli sütunları kontrol et
+            # Gerekli sütunları kontrol et (Ünvan ve Para Alındı mı kritik)
             if "Ünvan / Ad Soyad" in df_tasdik.columns and "Para Alındı mı" in df_tasdik.columns:
                 
                 # Ödeme durumuna göre ayır (Boş olanlar = Ödemedi)
@@ -193,9 +193,12 @@ elif secim == "Tasdik & Finans":
                 if not odenmeyenler.empty:
                     st.markdown(f"<div class='borclu-uyari'>🚨 DİKKAT: {len(odenmeyenler)} Mükellef Henüz Ödeme Yapmamış!</div>", unsafe_allow_html=True)
                     
-                    # Tabloyu Göster
-                    gosterilecek_sutunlar = ["Ünvan / Ad Soyad", "1.NUMARA", "Defter Tasdik Ücreti"]
-                    st.dataframe(odenmeyenler[gosterilecek_sutunlar], use_container_width=True)
+                    # Gösterilecek Sütunlar (Varsa göster, yoksa hata verme)
+                    cols_to_show = ["Ünvan / Ad Soyad"]
+                    if "Defter Tasdik Ücreti" in df_tasdik.columns: cols_to_show.append("Defter Tasdik Ücreti")
+                    if "1.NUMARA" in df_tasdik.columns: cols_to_show.append("1.NUMARA")
+                    
+                    st.dataframe(odenmeyenler[cols_to_show], use_container_width=True)
                     
                     st.subheader("📲 Borçlulara Toplu WhatsApp Gönder")
                     mesaj_taslagi = MESAJ_SABLONLARI["Tasdik Ödenmedi (SERT)"]
@@ -208,6 +211,7 @@ elif secim == "Tasdik & Finans":
                         
                         for i, row in odenmeyenler.iterrows():
                             isim = row["Ünvan / Ad Soyad"]
+                            # Telefonu '1.NUMARA' sütunundan al
                             tel_ham = str(row.get("1.NUMARA", ""))
                             
                             tels = numaralari_ayikla(tel_ham)
@@ -228,11 +232,11 @@ elif secim == "Tasdik & Finans":
                     st.balloons()
                     st.success("Harika! Listede ödeme yapmayan kimse yok.")
             else:
-                st.error("CSV dosyasında 'Ünvan / Ad Soyad' veya 'Para Alındı mı' sütunları bulunamadı.")
+                st.error("Excel dosyasında 'Ünvan / Ad Soyad' veya 'Para Alındı mı' sütunları bulunamadı.")
                 st.write("Bulunan Sütunlar:", df_tasdik.columns.tolist())
                 
         except Exception as e:
-            st.error(f"Dosya okunurken hata oluştu: {e}")
+            st.error(f"Excel okunurken hata oluştu: {e}")
 
 # --- 6. AYARLAR ---
 elif secim == "Ayarlar":
