@@ -45,10 +45,10 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- SABİT VERİLER ---
+# --- SABİT VERİLER (GÜNCELLENDİ) ---
 MESAJ_SABLONLARI = {
-    "Tasdik Ödenmedi (SERT)": "Sayın {isim}, 2026 yılı defter tasdik ücretiniz ({tutar} TL) ödenmediği için defterleriniz notere teslim EDİLMEMİŞTİR. Cezalı duruma düşmemek için acilen ödeme yapmanızı rica ederiz.",
-    "Kibar Hatırlatma": "Sayın {isim}, 2026 defter tasdik ödemenizi ({tutar} TL) hatırlatmak isteriz. İyi çalışmalar."
+    "Tasdik Ödenmedi (SERT UYARI)": "Sayın Mükellefimiz {isim}, 2026 yılı Defter Tasdik ve Yazılım Giderleri ücretiniz ({tutar} TL) daha önce tarafınıza bildirildiği ancak ödenmediği için defterleriniz notere teslim EDİLMEMİŞTİR. Bugün SON GÜN. Cezalı duruma düşmemek için acilen ödeme yapmanızı rica ederiz.",
+    "Kibar Hatırlatma": "Sayın Mükellefimiz {isim}, 2026 yılı Defter Tasdik ve Yazılım giderleri ödemenizi ({tutar} TL) hatırlatmak isteriz. Defterlerin zamanında tasdiklenmesi için ödemenizi bekliyoruz. İyi çalışmalar."
 }
 
 # --- SESSION ---
@@ -84,6 +84,16 @@ def numaralari_ayikla(tel_str):
         if len(sadece_rakam) == 10: temiz.append("90" + sadece_rakam)
         elif len(sadece_rakam) == 11 and sadece_rakam.startswith("0"): temiz.append("9" + sadece_rakam)
     return temiz
+
+# Para Formatı Düzeltici (9000.0 -> 9.000)
+def para_formatla(deger):
+    try:
+        # Önce float'a çevir
+        val = float(str(deger).replace(",", "."))
+        # Binlik ayracı koy ve küsurat yoksa .00 at
+        return "{:,.0f}".format(val).replace(",", ".")
+    except:
+        return str(deger)
 
 def verileri_getir(sayfa="Ana"):
     try: sheet = google_sheet_baglan(sayfa); return pd.DataFrame(sheet.get_all_records())
@@ -157,7 +167,6 @@ elif secim == "Tasdik Robotu":
         
         # --- BÖLÜM A: TAHSİLAT GÜNCELLEME (BASİT LİSTE) ---
         st.subheader("1. Tahsilat Durumunu Güncelle")
-        st.write("Parasını aldığınız kişileri buradan işaretleyip kaydedin.")
         
         edited_df = st.data_editor(
             df[["Ünvan / Ad Soyad", "Defter Tasdik Ücreti", "Tahsil_Edildi"]],
@@ -172,7 +181,6 @@ elif secim == "Tasdik Robotu":
         )
         
         if st.button("💾 Değişiklikleri Kaydet", type="primary"):
-            # Güncellemeleri ana veriye işle
             st.session_state['tasdik_data'].update(edited_df)
             st.success("Liste Güncellendi!")
             time.sleep(0.5)
@@ -183,7 +191,6 @@ elif secim == "Tasdik Robotu":
         # --- BÖLÜM B: TEK TEK MESAJ GÖNDERME (BORÇLULAR) ---
         st.subheader("2. Mükellef Bazında Mesaj Gönder")
         
-        # Sadece ödemeyenleri filtrele
         borclular = st.session_state['tasdik_data'][st.session_state['tasdik_data']["Tahsil_Edildi"] == False]
         
         if borclular.empty:
@@ -192,33 +199,38 @@ elif secim == "Tasdik Robotu":
             mesaj_turu = st.selectbox("Mesaj Şablonu Seç:", list(MESAJ_SABLONLARI.keys()))
             sablon = MESAJ_SABLONLARI[mesaj_turu]
             
-            st.markdown(f"**Gidecek Mesaj:** _{sablon.replace('{isim}', 'Mükellef Adı').replace('{tutar}', '000')}_")
+            # Önizleme
+            ornek_tutar = para_formatla(9000)
+            st.info(f"**Mesaj Önizleme:**\n{sablon.replace('{isim}', 'Elif Karagöz').replace('{tutar}', ornek_tutar)}")
             
             st.markdown("---")
             
             # HER SATIR İÇİN BİR KART VE BUTON
             for index, row in borclular.iterrows():
                 isim = row["Ünvan / Ad Soyad"]
-                tutar = row.get("Defter Tasdik Ücreti", 0)
+                tutar_raw = row.get("Defter Tasdik Ücreti", 0)
+                # Parayı güzel formatla (9.000 TL gibi)
+                tutar_guzel = para_formatla(tutar_raw)
+                
                 tel = row.get("1.NUMARA", "")
                 
-                # Kart Görünümü (Columns kullanarak)
+                # Kart Görünümü
                 col_info, col_btn = st.columns([3, 1])
                 
                 with col_info:
                     st.markdown(f"""
                     <div class='kisi-karti'>
                         <b>{isim}</b><br>
-                        <span style='color:grey'>Borç: {tutar} TL | Tel: {tel}</span>
+                        <span style='color:black; font-weight:bold'>Borç: {tutar_guzel} TL</span> <span style='color:grey'>| Tel: {tel}</span>
                     </div>
                     """, unsafe_allow_html=True)
                 
                 with col_btn:
-                    # Benzersiz anahtar (key) kullanarak buton çakışmasını önle
                     if st.button(f"📲 Gönder", key=f"btn_{index}"):
                         tels = numaralari_ayikla(str(tel))
                         if tels:
-                            msg = sablon.replace("{isim}", str(isim)).replace("{tutar}", str(tutar))
+                            # Mesajı oluştur
+                            msg = sablon.replace("{isim}", str(isim)).replace("{tutar}", str(tutar_guzel))
                             for t in tels:
                                 whatsapp_gonder(t, msg)
                             st.toast(f"{isim} kişisine mesaj gönderildi!", icon="✅")
