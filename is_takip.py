@@ -8,12 +8,12 @@ import requests
 # 1. AYARLAR
 # ==========================================
 st.set_page_config(
-    page_title="Müşavir Kulesi (Liste Entegrasyonlu)",
+    page_title="Müşavir Kulesi (e-Mükellef Uyumlu)",
     page_icon="🏢",
     layout="wide"
 )
 
-# WhatsApp API Ayarları
+# WhatsApp API Ayarları (Burayı doldurun)
 ID_INSTANCE = st.secrets.get("ID_INSTANCE", "YOUR_INSTANCE_ID")
 API_TOKEN = st.secrets.get("API_TOKEN", "YOUR_API_TOKEN")
 SABIT_IHBAR_NO = "905351041616"
@@ -29,13 +29,9 @@ if 'mukellef_listesi' not in st.session_state: st.session_state['mukellef_listes
 def text_to_float(text):
     """Metni paraya çevirir."""
     try:
-        # Gereksiz karakterleri temizle
         clean = re.sub(r'[^\d,\.]', '', str(text)).strip()
-        # 1.000,00 formatı (Türkçe)
-        if "," in clean and "." in clean: 
-            clean = clean.replace(".", "").replace(",", ".")
-        elif "," in clean: 
-            clean = clean.replace(",", ".")
+        if "," in clean and "." in clean: clean = clean.replace(".", "").replace(",", ".")
+        elif "," in clean: clean = clean.replace(",", ".")
         return float(clean)
     except: return 0.0
 
@@ -66,15 +62,14 @@ def isim_getir_listeden(vkn):
     if st.session_state['mukellef_listesi'] is not None and vkn:
         df = st.session_state['mukellef_listesi']
         
-        # Vergi Numaraları string olarak saklanmalı ki 0 ile başlayanlar bozulmasın
-        df['TC/VN'] = df['TC/VN'].astype(str).str.strip()
+        # Vergi Numaralarını temizle ve string yap
         vkn = str(vkn).strip()
         
-        # Eşleşme ara
-        sonuc = df[df['TC/VN'] == vkn]
+        # Eşleşme ara (Vergi_No sütununda)
+        sonuc = df[df['Vergi_No'] == vkn]
         
         if not sonuc.empty:
-            return sonuc.iloc[0]['Ünvan / Ad Soyad']
+            return sonuc.iloc[0]['Unvan']
     
     return f"LİSTEDE YOK ({vkn})"
 
@@ -85,33 +80,52 @@ def isim_getir_listeden(vkn):
 with st.sidebar:
     st.header("YÖNETİM PANELİ")
     mod = st.radio("Seçiniz:", ["1. Mükellef Listesi Yükle", "2. Analizi Başlat"])
-    
-    if mod == "1. Mükellef Listesi Yükle":
-        st.info("İndirdiğiniz 'e-Mükellef' Excel veya CSV dosyasını buraya yükleyin.")
 
-# --- MODÜL 1: LİSTE YÜKLEME ---
+# --- MODÜL 1: LİSTE YÜKLEME (DÜZELTİLDİ) ---
 if mod == "1. Mükellef Listesi Yükle":
     st.title("📂 Mükellef Listesi Entegrasyonu")
+    st.info("e-Mükellef formatındaki (TC/VN ve Ünvan / Ad Soyad sütunlu) dosyanızı yükleyin.")
     
     up_list = st.file_uploader("Mükellef Listesi (Excel/CSV)", type=["xlsx", "xls", "csv"])
     
     if up_list:
         try:
-            # Dosya türüne göre oku
+            # Dosyayı oku (String olarak, VKN başındaki 0'lar gitmesin)
             if up_list.name.endswith(".csv"):
-                df = pd.read_csv(up_list, dtype=str) # Tüm veriyi metin olarak oku
+                df = pd.read_csv(up_list, dtype=str)
             else:
                 df = pd.read_excel(up_list, dtype=str)
             
-            # Kolon kontrolü (Senin dosyanın kolonları)
-            gerekli_kolonlar = ["Ünvan / Ad Soyad", "TC/VN"]
-            if all(col in df.columns for col in gerekli_kolonlar):
+            # --- KOLON EŞLEŞTİRME VE DÜZELTME ---
+            # Sizin dosyanızdaki başlıklar: "TC/VN" ve "Ünvan / Ad Soyad"
+            # Bunları kodun anlayacağı "Vergi_No" ve "Unvan" formatına çevirelim.
+            
+            rename_map = {}
+            
+            # Vergi No Kolonunu Bul
+            if "TC/VN" in df.columns: rename_map["TC/VN"] = "Vergi_No"
+            elif "Vergi No" in df.columns: rename_map["Vergi No"] = "Vergi_No"
+            elif "VN" in df.columns: rename_map["VN"] = "Vergi_No"
+            
+            # Ünvan Kolonunu Bul
+            if "Ünvan / Ad Soyad" in df.columns: rename_map["Ünvan / Ad Soyad"] = "Unvan"
+            elif "Ünvan" in df.columns: rename_map["Ünvan"] = "Unvan"
+            
+            # İsimleri değiştir
+            df = df.rename(columns=rename_map)
+            
+            # Kontrol et: Gerekli kolonlar oluştu mu?
+            if "Vergi_No" in df.columns and "Unvan" in df.columns:
+                # Boşlukları temizle
+                df["Vergi_No"] = df["Vergi_No"].astype(str).str.strip()
+                df["Unvan"] = df["Unvan"].astype(str).str.strip()
+                
                 st.session_state['mukellef_listesi'] = df
                 st.success(f"✅ Liste Başarıyla Yüklendi! Toplam {len(df)} Mükellef.")
-                st.dataframe(df[["Ünvan / Ad Soyad", "TC/VN"]].head())
+                st.dataframe(df[["Unvan", "Vergi_No"]].head())
             else:
-                st.error("Yüklenen dosyada 'Ünvan / Ad Soyad' veya 'TC/VN' sütunları bulunamadı.")
-                st.write("Mevcut Sütunlar:", df.columns.tolist())
+                st.error("❌ HATA: Dosyada 'TC/VN' veya 'Ünvan / Ad Soyad' sütunları bulunamadı.")
+                st.write("Dosyanızdaki Sütunlar:", df.columns.tolist())
                 
         except Exception as e:
             st.error(f"Dosya okuma hatası: {e}")
@@ -147,19 +161,16 @@ elif mod == "2. Analizi Başlat":
                         # 1. Vergi Numarasını PDF'ten Bul
                         vkn = vkn_bul_pdf(text)
                         
-                        # 2. İsmi Senin Listenden Çek
+                        # 2. İsmi Senin Listenden Çek (Eşleştirme)
                         isim = isim_getir_listeden(vkn)
                         
                         # 3. Rakamsal Verileri Çek
-                        # Matrah
                         m_match = re.search(r"(?:TOPLAM MATRAH|Teslim ve Hizmetlerin Karşılığını).*?([\d\.,]+)", text, re.IGNORECASE)
                         matrah = text_to_float(m_match.group(1)) if m_match else 0.0
                         
-                        # KDV
                         k_match = re.search(r"(?:TOPLAM HESAPLANAN KDV|Hesaplanan KDV Toplamı).*?([\d\.,]+)", text, re.IGNORECASE)
                         kdv = text_to_float(k_match.group(1)) if k_match else 0.0
                         
-                        # POS (Kredi Kartı)
                         pos_match = re.search(r"(?:Kredi Kartı ile Tahsil|Kredi Kartı).*?([\d\.,]+)", text, re.IGNORECASE)
                         pos = text_to_float(pos_match.group(1)) if pos_match else 0.0
                         
@@ -225,4 +236,3 @@ elif mod == "2. Analizi Başlat":
                                 st.toast("✅ Mesaj Başarıyla İletildi!")
                             else:
                                 st.error("Gönderim Hatası!")
-
