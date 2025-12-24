@@ -5,10 +5,10 @@ import pdfplumber
 import requests
 
 # ==========================================
-# 1. AYARLAR & GÖRÜNÜM
+# 1. AYARLAR & TASARIM
 # ==========================================
 st.set_page_config(
-    page_title="Müşavir Kulesi (Otomatik Eşleşme)",
+    page_title="Müşavir Kulesi (Sütun Ayarlı)",
     page_icon="🏢",
     layout="wide"
 )
@@ -20,11 +20,16 @@ SABIT_IHBAR_NO = "905351041616"
 
 st.markdown("""
     <style>
-    .stApp {background-color: #f7f9fc; font-family: 'Segoe UI', sans-serif;}
-    .success-box {background-color: #d4edda; color: #155724; padding: 15px; border-radius: 8px; border: 1px solid #c3e6cb;}
-    .error-box {background-color: #f8d7da; color: #721c24; padding: 15px; border-radius: 8px; border: 1px solid #f5c6cb;}
-    .info-card {background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 10px;}
-    .risk-card {border-left: 6px solid #dc3545;}
+    .stApp {background-color: #f0f2f6; font-family: 'Segoe UI', sans-serif;}
+    .risk-box {
+        background: #fff; border-left: 6px solid #d32f2f;
+        padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 15px;
+    }
+    .metric-box {
+        background: #f8f9fa; padding: 10px; border-radius: 5px; text-align: center; border: 1px solid #eee;
+    }
+    .metric-title {font-size: 11px; color: #666; font-weight: bold; text-transform: uppercase;}
+    .metric-value {font-size: 16px; color: #333; font-weight: bold;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -54,96 +59,98 @@ def whatsapp_gonder(mesaj):
         return True
     except: return False
 
-def vkn_bul_pdf(text):
-    """PDF Sayfasındaki Vergi Kimlik Numarasını (10 veya 11 hane) bulur."""
-    # 1. Öncelik: Tırnak içindeki net veri "1234567890" (Sizin PDF yapınız)
+def id_bul_pdf(text):
+    """PDF'ten 10 (VKN) veya 11 (TC) haneli numarayı çeker."""
+    # 1. Öncelik: Tırnak içindeki net veri "1234567890"
     m1 = re.search(r'"(\d{10,11})"', text)
     if m1: return m1.group(1)
     
-    # 2. Öncelik: Etiketli veri
-    m2 = re.search(r'(?:Vergi Kimlik|TC Kimlik).*?(\d{10,11})', text, re.IGNORECASE | re.DOTALL)
+    # 2. Öncelik: Etiketli veri (Vergi Kimlik... TC Kimlik...)
+    m2 = re.search(r'(?:Vergi Kimlik|TC Kimlik|Vergi No).*?(\d{10,11})', text, re.IGNORECASE | re.DOTALL)
     if m2: return m2.group(1)
     
     return None
 
-def isim_getir(vkn):
-    """Excel veritabanından VKN'ye karşılık gelen ismi bulur."""
-    if st.session_state['mukellef_db'] is not None and vkn:
-        df = st.session_state['mukellef_db']
-        vkn = str(vkn).strip()
+def isim_eslestir(numara):
+    """Numarayı Excel'in B (TC) ve C (VKN) sütunlarında arar, A (Unvan) sütununu döner."""
+    if st.session_state['mukellef_db'] is None or not numara:
+        return f"Tanımsız ({numara})"
         
-        # DataFrame içinde ara
-        sonuc = df[df['VKN'] == vkn]
-        if not sonuc.empty:
-            return sonuc.iloc[0]['ISIM']
-            
-    return f"LİSTEDE YOK ({vkn})"
+    df = st.session_state['mukellef_db']
+    numara = str(numara).strip()
+    
+    # Önce C Sütununda (Vergi No) Ara
+    vkn_match = df[df['VKN'] == numara]
+    if not vkn_match.empty:
+        return vkn_match.iloc[0]['UNVAN']
+        
+    # Yoksa B Sütununda (TC) Ara
+    tc_match = df[df['TC'] == numara]
+    if not tc_match.empty:
+        return tc_match.iloc[0]['UNVAN']
+        
+    return f"Listede Yok ({numara})"
 
 # ==========================================
-# 3. YÖNETİM PANELİ
+# 3. UYGULAMA
 # ==========================================
 
 with st.sidebar:
-    st.header("MÜŞAVİR KULESİ")
-    mod = st.radio("Seçenekler:", ["1. Mükellef Listesi (Excel)", "2. KDV Analizi"])
+    st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=70)
+    st.header("MÜŞAVİR PANELİ")
+    mod = st.radio("Seçenekler:", ["1. Excel Listesi Yükle", "2. KDV Analizi"])
+    
+    if mod == "1. Excel Listesi Yükle":
+        st.warning("Excel Formatı:\nSütun A: Ünvan\nSütun B: TC No\nSütun C: Vergi No")
 
 # --- MODÜL 1: EXCEL YÜKLEME ---
-if mod == "1. Mükellef Listesi (Excel)":
-    st.title("📂 Mükellef Listesi Yükle")
-    st.info("e-Mükellef sisteminden aldığınız Excel dosyasını yükleyin. Sütun isimleri otomatik algılanacaktır.")
+if mod == "1. Excel Listesi Yükle":
+    st.title("📂 Mükellef Listesi (Sütun Eşleştirme)")
+    st.info("Lütfen A, B ve C sütunlarının doğru olduğu Excel dosyasını yükleyin.")
     
-    up_file = st.file_uploader("Excel Dosyası (.xlsx / .xls)", type=["xlsx", "xls", "csv"])
+    up_excel = st.file_uploader("Excel Dosyası", type=["xlsx", "xls"])
     
-    if up_file:
+    if up_excel:
         try:
-            # Dosya Okuma
-            if up_file.name.endswith(".csv"):
-                df = pd.read_csv(up_file, dtype=str)
-            else:
-                df = pd.read_excel(up_file, dtype=str)
+            # Excel'i oku (Header yok varsayabiliriz veya var varsayabiliriz, iloc ile sütun sırasına göre alacağız)
+            df = pd.read_excel(up_excel, dtype=str)
             
-            # --- AKILLI KOLON EŞLEŞTİRME ---
-            # Dosyanızdaki olası kolon isimlerini standart hale getiriyoruz
-            yeni_kolonlar = {}
-            for col in df.columns:
-                col_clean = col.strip()
-                # VKN Kolonunu Bul
-                if col_clean in ["TC/VN", "Vergi No", "VN", "TC", "VKN"]:
-                    yeni_kolonlar[col] = "VKN"
-                # İsim Kolonunu Bul
-                elif col_clean in ["Ünvan / Ad Soyad", "Ünvan", "Ad Soyad", "Firma Adı", "Mükellef"]:
-                    yeni_kolonlar[col] = "ISIM"
+            # SÜTUNLARI İNDEKSE GÖRE AL (A=0, B=1, C=2)
+            # Kullanıcı talimatı: A=Unvan, B=TC, C=VergiNo
+            # Veri güvenliği için yeni bir dataframe oluşturuyoruz
+            clean_df = pd.DataFrame()
             
-            df.rename(columns=yeni_kolonlar, inplace=True)
-            
-            # Kontrol
-            if "VKN" in df.columns and "ISIM" in df.columns:
-                # Veri Temizliği (Boşlukları sil)
-                df["VKN"] = df["VKN"].astype(str).str.strip()
-                df["ISIM"] = df["ISIM"].astype(str).str.strip()
+            if len(df.columns) >= 3:
+                clean_df['UNVAN'] = df.iloc[:, 0].astype(str).str.strip()  # Sütun A
+                clean_df['TC']    = df.iloc[:, 1].astype(str).str.strip()  # Sütun B
+                clean_df['VKN']   = df.iloc[:, 2].astype(str).str.strip()  # Sütun C
                 
-                st.session_state['mukellef_db'] = df
-                st.markdown(f"<div class='success-box'>✅ Başarılı! <b>{len(df)}</b> mükellef sisteme yüklendi.</div>", unsafe_allow_html=True)
-                st.dataframe(df[["ISIM", "VKN"]].head())
+                # NaN değerleri temizle
+                clean_df = clean_df.fillna("")
+                
+                st.session_state['mukellef_db'] = clean_df
+                st.success(f"✅ {len(clean_df)} Mükellef Yüklendi.")
+                st.write("Veri Önizleme (İlk 5 Satır):")
+                st.dataframe(clean_df.head())
             else:
-                st.markdown(f"<div class='error-box'>❌ HATA: Gerekli sütunlar bulunamadı.<br>Dosyanızdaki sütunlar: {list(df.columns)}<br>Beklenen: 'TC/VN' ve 'Ünvan / Ad Soyad'</div>", unsafe_allow_html=True)
+                st.error("HATA: Excel dosyasında en az 3 sütun olmalı (A, B, C).")
                 
         except Exception as e:
-            st.error(f"Dosya okuma hatası: {e}")
+            st.error(f"Dosya hatası: {e}")
 
 # --- MODÜL 2: ANALİZ ---
 elif mod == "2. KDV Analizi":
-    st.title("🕵️‍♂️ KDV & POS Uyumsuzluk Analizi")
+    st.title("🕵️‍♂️ KDV Uyumsuzluk Analizi")
     
     if st.session_state['mukellef_db'] is None:
-        st.warning("⚠️ Lütfen önce '1. Mükellef Listesi' menüsünden Excel dosyasını yükleyin.")
+        st.error("⚠️ Önce '1. Excel Listesi Yükle' menüsünden listeyi yükleyiniz.")
         st.stop()
         
     pdf_up = st.file_uploader("KDV Beyannamesi (PDF)", type=["pdf"])
     
     if pdf_up:
         if st.button("ANALİZİ BAŞLAT", type="primary"):
-            st.info("Beyannameler taranıyor, Vergi No üzerinden isimler eşleştiriliyor...")
+            st.info("PDF taranıyor, A-B-C sütunlarına göre eşleştirme yapılıyor...")
             sonuclar = []
             
             with pdfplumber.open(pdf_up) as pdf:
@@ -155,14 +162,13 @@ elif mod == "2. KDV Analizi":
                     text = page.extract_text()
                     if not text: continue
                     
-                    # Sadece ilgili sayfaları işle
                     if "KATMA DEĞER VERGİSİ" in text or "MATRAH" in text:
                         
-                        # 1. PDF'ten Vergi No (VKN) Bul
-                        vkn = vkn_bul_pdf(text)
+                        # 1. PDF'ten Numarayı Bul
+                        bulunan_id = id_bul_pdf(text)
                         
-                        # 2. Excel Listesinden İsmi Bul
-                        isim = isim_getir(vkn)
+                        # 2. Listeden İsmi Çek
+                        isim = isim_eslestir(bulunan_id)
                         
                         # 3. Verileri Çek
                         m_match = re.search(r"(?:TOPLAM MATRAH|Teslim ve Hizmetlerin Karşılığını).*?([\d\.,]+)", text, re.IGNORECASE)
@@ -174,15 +180,15 @@ elif mod == "2. KDV Analizi":
                         pos_match = re.search(r"(?:Kredi Kartı ile Tahsil|Kredi Kartı).*?([\d\.,]+)", text, re.IGNORECASE)
                         pos = text_to_float(pos_match.group(1)) if pos_match else 0.0
                         
-                        # 4. Hesaplama: (Matrah + KDV) vs POS
+                        # 4. Hesaplama
                         beyan = matrah + kdv
                         fark = pos - beyan
                         
-                        # Fark varsa listeye ekle
+                        # 50 TL Tolerans
                         if fark > 50:
                             sonuclar.append({
                                 "Mükellef": isim,
-                                "VKN": vkn,
+                                "ID": bulunan_id,
                                 "POS": pos,
                                 "Beyan": beyan,
                                 "Fark": fark
@@ -191,46 +197,53 @@ elif mod == "2. KDV Analizi":
             st.session_state['sonuclar'] = pd.DataFrame(sonuclar)
             st.rerun()
 
-    # SONUÇ LİSTESİ
+    # SONUÇ EKRANI
     if st.session_state['sonuclar'] is not None:
         df = st.session_state['sonuclar']
         
         if df.empty:
-            st.success("✅ Tebrikler! Hiçbir riskli mükellef bulunamadı.")
+            st.success("✅ Riskli kayıt bulunamadı.")
         else:
-            st.error(f"🚨 Toplam {len(df)} Adet Riskli Durum Tespit Edildi")
+            st.error(f"🚨 {len(df)} Riskli Mükellef Tespit Edildi")
             
             for i, row in df.iterrows():
-                m_ad = row['Mükellef']
-                m_vkn = row['VKN']
+                ad = row['Mükellef']
+                id_no = row['ID']
                 
-                # Kart Tasarımı
                 with st.container():
                     col1, col2 = st.columns([3, 1])
                     with col1:
                         st.markdown(f"""
-                        <div class='info-card risk-card'>
-                            <div style='font-size:18px; font-weight:bold; color:#d9534f'>{m_ad}</div>
-                            <div style='font-size:12px; color:#777'>Vergi No: {m_vkn}</div>
-                            <hr style='margin:10px 0; border-top:1px solid #eee;'>
-                            <div style='display:flex; justify-content:space-between; width:80%'>
-                                <div><b>POS Tahsilat:</b><br>{para_formatla(row['POS'])}</div>
-                                <div><b>Beyan (Dahil):</b><br>{para_formatla(row['Beyan'])}</div>
+                        <div class='risk-box'>
+                            <div style='font-size:18px; font-weight:bold; color:#d32f2f'>{ad}</div>
+                            <div style='font-size:12px; color:#999; margin-bottom:10px'>Vergi/TC No: {id_no}</div>
+                            <div style='display:flex; gap:15px;'>
+                                <div class='metric-box'>
+                                    <div class='metric-title'>POS TAHSİLAT</div>
+                                    <div class='metric-value'>{para_formatla(row['POS'])}</div>
+                                </div>
+                                <div class='metric-box'>
+                                    <div class='metric-title'>BEYAN (KDV DAHİL)</div>
+                                    <div class='metric-value'>{para_formatla(row['Beyan'])}</div>
+                                </div>
+                                <div class='metric-box' style='border-color:#d32f2f; background:#fff5f5'>
+                                    <div class='metric-title' style='color:#d32f2f'>EKSİK BEYAN</div>
+                                    <div class='metric-value' style='color:#d32f2f'>{para_formatla(row['Fark'])}</div>
+                                </div>
                             </div>
-                            <div style='margin-top:10px; color:#d9534f; font-weight:bold'>⚠️ EKSİK BEYAN: {para_formatla(row['Fark'])}</div>
                         </div>
                         """, unsafe_allow_html=True)
                     
                     with col2:
-                        st.write("") 
+                        st.write("")
                         st.write("")
                         if st.button(f"İHBAR ET 📲", key=f"btn_{i}", type="secondary", use_container_width=True):
                             msg = (f"⚠️ *KDV RİSK RAPORU*\n\n"
-                                   f"Firma: {m_ad}\nVKN: {m_vkn}\n"
+                                   f"Firma: {ad}\nNo: {id_no}\n"
                                    f"POS: {para_formatla(row['POS'])}\n"
                                    f"Beyan: {para_formatla(row['Beyan'])}\n"
                                    f"Fark: {para_formatla(row['Fark'])}\n\n"
-                                   f"Lütfen kontrol ediniz.")
+                                   f"Kontrol ediniz.")
                             
-                            if whatsapp_gonder(msg): st.toast("✅ Mesaj İletildi!")
-                            else: st.error("Gönderim Hatası!")
+                            if whatsapp_gonder(msg): st.toast("Gönderildi ✅")
+                            else: st.error("Hata!")
