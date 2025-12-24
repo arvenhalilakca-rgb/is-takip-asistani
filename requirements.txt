@@ -5,6 +5,6 @@ google-api-python-client
 requests
 pandas
 plotly
-pdfplumber
 streamlit-option-menu
 openpyxl
+pdfplumber
