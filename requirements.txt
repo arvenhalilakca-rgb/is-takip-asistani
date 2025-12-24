@@ -7,3 +7,4 @@ pandas
 plotly
 pdfplumber
 streamlit-option-menu
+openpyxl
