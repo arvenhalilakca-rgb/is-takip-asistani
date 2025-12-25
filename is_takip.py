@@ -2,6 +2,7 @@ import os
 import re
 import time
 import uuid
+import shutil
 import requests
 import pandas as pd
 import streamlit as st
@@ -25,7 +26,15 @@ SABIT_IHBAR_NO = "905351041616"
 KALICI_EXCEL_YOLU     = "mukellef_db_kalici.xlsx"
 PERSONEL_DOSYASI      = "personel_db.xlsx"
 YAPILACAK_IS_DOSYASI  = "yapilacak_isler.xlsx"
+YAPILACAK_IS_BACKUP   = "yapilacak_isler.xlsx.bak"
 MUKELLEF_NOT_DOSYASI  = "mukellef_notlari.xlsx"
+
+# Yapılacak iş kolonları (stabil şema)
+YAPILACAK_IS_COLS = [
+    "IsID","Tip","Durum","Öncelik","Dönem","Mükellef","VKN",
+    "Konu","Açıklama","SonTarih","Sorumlu","SorumluTel","MükellefTelAll",
+    "Not","OlusturmaZamani","GuncellemeZamani","KapanisZamani"
+]
 
 # =========================================================
 # 1) TEMA / CSS (Mavi-Beyaz Profesyonel Panel)
@@ -136,16 +145,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================================================
-# 2) YARDIMCI FONKSİYONLAR
+# 2) GENEL YARDIMCILAR
 # =========================================================
 def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def normalize_phone(phone: str) -> str:
     p = re.sub(r"\D", "", str(phone or ""))
-    if len(p) == 10:                 # 5xxxxxxxxx
+    if len(p) == 10:
         p = "90" + p
-    if len(p) == 11 and p.startswith("0"):  # 05xxxxxxxxx
+    if len(p) == 11 and p.startswith("0"):
         p = "9" + p
     return p if len(p) >= 11 else ""
 
@@ -196,6 +205,16 @@ def whatsapp_gonder_coklu(numaralar: list, mesaj: str) -> int:
 def yeni_is_id() -> str:
     return "IS-" + datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6].upper()
 
+# =========================================================
+# 3) KALICI OKU/YAZ (SİLİNMEZLİK + YEDEK GARANTİSİ)
+# =========================================================
+def safe_backup(src: str, dst: str):
+    try:
+        if os.path.exists(src):
+            shutil.copy2(src, dst)
+    except Exception:
+        pass
+
 def load_excel_safe(path, cols=None) -> pd.DataFrame:
     if not os.path.exists(path):
         return pd.DataFrame(columns=cols or []).fillna("")
@@ -210,8 +229,11 @@ def load_excel_safe(path, cols=None) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame(columns=cols or []).fillna("")
 
-def save_excel_safe(df: pd.DataFrame, path: str):
+def save_excel_safe(df: pd.DataFrame, path: str, backup_path: str = None):
     df = df.fillna("")
+    # Kaydetmeden önce yedek al
+    if backup_path:
+        safe_backup(path, backup_path)
     df.to_excel(path, index=False)
 
 def load_mukellef() -> pd.DataFrame:
@@ -230,18 +252,64 @@ def load_personel() -> pd.DataFrame:
         df["Aktif"] = "Evet"
     return df.fillna("")
 
-def load_yapilacak_isler() -> pd.DataFrame:
-    cols = [
-        "IsID","Tip","Durum","Öncelik","Dönem","Mükellef","VKN",
-        "Konu","Açıklama","SonTarih","Sorumlu","SorumluTel","MükellefTelAll",
-        "Not","OlusturmaZamani","GuncellemeZamani","KapanisZamani"
-    ]
-    return load_excel_safe(YAPILACAK_IS_DOSYASI, cols=cols).fillna("")
-
 def load_mukellef_not() -> pd.DataFrame:
     cols = ["VKN","Mükellef","Notlar","GuncellemeZamani"]
     return load_excel_safe(MUKELLEF_NOT_DOSYASI, cols=cols).fillna("")
 
+def load_yapilacak_isler() -> pd.DataFrame:
+    """
+    Kayıtlar asla kaybolmasın diye:
+    - Ana dosya okunamazsa backup'tan dene.
+    - Şemayı her zaman tamamla.
+    """
+    df = load_excel_safe(YAPILACAK_IS_DOSYASI, cols=YAPILACAK_IS_COLS)
+    if df.empty and os.path.exists(YAPILACAK_IS_BACKUP):
+        df_bak = load_excel_safe(YAPILACAK_IS_BACKUP, cols=YAPILACAK_IS_COLS)
+        if not df_bak.empty:
+            # backup çalışıyorsa ana dosyayı geri yaz
+            save_excel_safe(df_bak, YAPILACAK_IS_DOSYASI, backup_path=None)
+            df = df_bak.copy()
+    # IsID yoksa zaten bozuk demektir; yine de boş çerçeve döndür
+    if df is None or df.empty:
+        df = pd.DataFrame(columns=YAPILACAK_IS_COLS)
+    return df.fillna("")
+
+def append_yapilacak_is(row: dict):
+    """
+    EN KRİTİK FONKSİYON:
+    - Var olan kayıtları asla silmez
+    - Sadece ekler
+    - Kaydetmeden önce backup alır
+    """
+    df = load_yapilacak_isler()
+    # güvenlik: aynı IsID varsa ekleme (çakışma)
+    if not df.empty and (df["IsID"].astype(str) == str(row.get("IsID",""))).any():
+        return
+    df2 = pd.concat([df, pd.DataFrame([row], columns=YAPILACAK_IS_COLS)], ignore_index=True)
+    save_excel_safe(df2, YAPILACAK_IS_DOSYASI, backup_path=YAPILACAK_IS_BACKUP)
+
+def update_yapilacak_is(isid: str, updates: dict):
+    """
+    Güncelleme:
+    - Sadece seçili kaydı günceller
+    - Diğer kayıtlar korunur
+    - Backup alınır
+    """
+    df = load_yapilacak_isler()
+    if df.empty:
+        return
+    m = df["IsID"].astype(str) == str(isid)
+    if not m.any():
+        return
+    idx = df[m].index[0]
+    for k, v in (updates or {}).items():
+        if k in df.columns:
+            df.loc[idx, k] = v
+    save_excel_safe(df, YAPILACAK_IS_DOSYASI, backup_path=YAPILACAK_IS_BACKUP)
+
+# =========================================================
+# 4) MESAJ ŞABLONLARI
+# =========================================================
 def msg_yapilacak_is_personel(r: dict) -> str:
     return (
         "✅ *YAPILACAK İŞ ATAMASI*\n"
@@ -268,13 +336,12 @@ def msg_yapilacak_is_mukellef(r: dict) -> str:
         "Geri dönüşünüz rica olunur."
     )
 
-# Session ön yükleme
+# =========================================================
+# 5) SOL MENÜ (AYNEN)
+# =========================================================
 if "mukellef_db" not in st.session_state or st.session_state["mukellef_db"] is None:
     st.session_state["mukellef_db"] = load_mukellef()
 
-# =========================================================
-# 3) SOL MENÜ (AYNEN)
-# =========================================================
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=64)
     st.header("HALİL AKÇA")
@@ -286,7 +353,7 @@ with st.sidebar:
     st.caption("Takip ve Yönetim Paneli")
 
 # =========================================================
-# 4) 1. EXCEL YÜKLE
+# 6) 1. EXCEL YÜKLE
 # =========================================================
 if secim == "1. Excel Listesi Yükle":
     st.markdown("""
@@ -318,7 +385,7 @@ if secim == "1. Excel Listesi Yükle":
 
             df = df.fillna("")
             st.session_state["mukellef_db"] = df
-            save_excel_safe(df[["A_UNVAN","B_TC","C_VKN","D_TEL","D_TEL_ALL"]], KALICI_EXCEL_YOLU)
+            save_excel_safe(df[["A_UNVAN","B_TC","C_VKN","D_TEL","D_TEL_ALL"]], KALICI_EXCEL_YOLU, backup_path=None)
 
             st.success(f"✅ Kaydedildi. Toplam kayıt: {len(df)}")
             st.dataframe(df[["A_UNVAN","B_TC","C_VKN","D_TEL_ALL"]].head(40), use_container_width=True)
@@ -328,13 +395,13 @@ if secim == "1. Excel Listesi Yükle":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================================================
-# 5) 2. KDV ANALİZ ROBOTU (YAPILACAK İŞ PANELİ)
+# 7) 2. PANEL (YAPILACAK İŞ KAYDI KESİNLİKLE SİLİNMEZ)
 # =========================================================
 elif secim == "2. KDV Analiz Robotu":
     st.markdown("""
     <div class="ha-topbar">
       <p class="ha-title">Halil Akça Takip Sistemi</p>
-      <p class="ha-sub">Yapılacak İş oluşturma · Personel atama · WhatsApp bildirim · İş takibi</p>
+      <p class="ha-sub">Yapılacak İş oluşturma · Personel atama · WhatsApp bildirim · Kalıcı kayıt (silinmez)</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -358,13 +425,12 @@ elif secim == "2. KDV Analiz Robotu":
     st.markdown(f'<div class="kpi"><div class="v">{open_count}</div><div class="l">Açık</div></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="kpi"><div class="v">{inq_count}</div><div class="l">İncelemede</div></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="kpi"><div class="v">{clo_count}</div><div class="l">Kapandı</div></div>', unsafe_allow_html=True)
-    st.markdown('</div></div>', unsafe_allow_html=True)
+    st.markdown('</div><div class="small">🔒 Kayıtlar dosyada tutulur ve bu panelde silme işlemi yoktur. Kod değişse bile kayıtlar kalır.</div></div>', unsafe_allow_html=True)
 
-    # Üst bölüm: 2 kart (sol: yapılacak iş oluştur, sağ: mükellef notu)
     col_left, col_right = st.columns([1.25, 1.0], gap="large")
 
     with col_left:
-        st.markdown('<div class="card"><h3>➕ Yapılacak İş Oluştur</h3><div class="hint">Mükellef seçin, işi tanımlayın, personel atayın ve isterseniz WhatsApp bildirim gönderin.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card"><h3>➕ Yapılacak İş Oluştur</h3><div class="hint">Bu kayıtlar kalıcıdır. Silinmez; sadece durum/not güncellenir.</div>', unsafe_allow_html=True)
 
         mukellef = st.selectbox("Mükellef", dfm["A_UNVAN"].astype(str).tolist())
         rec = dfm[dfm["A_UNVAN"].astype(str) == str(mukellef)].iloc[0].to_dict()
@@ -374,15 +440,16 @@ elif secim == "2. KDV Analiz Robotu":
 
         st.markdown(
             f'<span class="badge badge-blue">VKN/TCKN: {vkn or "-"}</span> &nbsp; '
-            f'<span class="badge">Tel: {tel_all or "-"}</span>',
+            f'<span class="badge">Tel: {tel_all or "-"}</span> &nbsp; '
+            f'<span class="badge">Kayıt: {len(dfy)}</span>',
             unsafe_allow_html=True
         )
 
         st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
-        konu = st.text_input("Konu", placeholder="Örn: Ocak KDV evrak tamamlama")
+        konu = st.text_input("Konu", placeholder="Örn: KDV evrak tamamlama")
         aciklama = st.text_area("Açıklama / Talimat", height=105)
-        is_notu = st.text_area("İş Notu (Bu kayda özel)", height=85)
+        is_notu = st.text_area("Not (Bu kayıt)", height=85)
 
         cA, cB, cC = st.columns([1.1, 1.0, 1.0])
         with cA:
@@ -433,9 +500,10 @@ elif secim == "2. KDV Analiz Robotu":
                     "KapanisZamani": ""
                 }
 
-                dfy2 = pd.concat([dfy, pd.DataFrame([row])], ignore_index=True)
-                save_excel_safe(dfy2, YAPILACAK_IS_DOSYASI)
+                # 🔒 SADECE EKLER — ASLA SİLMEZ
+                append_yapilacak_is(row)
 
+                # WhatsApp
                 if wa_p and sor_tel:
                     whatsapp_gonder(sor_tel, msg_yapilacak_is_personel(row))
                 if wa_m and tel_list:
@@ -450,43 +518,41 @@ elif secim == "2. KDV Analiz Robotu":
         st.markdown("</div>", unsafe_allow_html=True)
 
     with col_right:
-        st.markdown('<div class="card"><h3>🗒️ Mükellef Notları (Kalıcı)</h3><div class="hint">Bu notlar mükellef bazında saklanır ve her girişte görünür.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card"><h3>🗒️ Mükellef Notları (Kalıcı)</h3><div class="hint">Bu notlar mükellef bazında saklanır ve silinmez.</div>', unsafe_allow_html=True)
 
         old_note = ""
-        hitn = dfn[dfn["VKN"].astype(str) == str(vkn)]
-        if not hitn.empty:
-            old_note = str(hitn.iloc[0].get("Notlar",""))
+        hitn = load_mukellef_not()
+        hitx = hitn[hitn["VKN"].astype(str) == str(vkn)]
+        if not hitx.empty:
+            old_note = str(hitx.iloc[0].get("Notlar",""))
 
         muk_not = st.text_area("Genel Not", value=old_note, height=240)
 
-        cN1, cN2 = st.columns([1,1])
-        with cN1:
-            if st.button("💾 NOTU KAYDET", use_container_width=True):
-                dfn2 = dfn.copy()
-                m = dfn2["VKN"].astype(str) == str(vkn)
-                if m.any():
-                    idx = dfn2[m].index[0]
-                    dfn2.loc[idx, "Mükellef"] = str(mukellef)
-                    dfn2.loc[idx, "Notlar"] = str(muk_not).strip()
-                    dfn2.loc[idx, "GuncellemeZamani"] = now_str()
-                else:
-                    dfn2 = pd.concat([dfn2, pd.DataFrame([{
-                        "VKN": str(vkn),
-                        "Mükellef": str(mukellef),
-                        "Notlar": str(muk_not).strip(),
-                        "GuncellemeZamani": now_str()
-                    }])], ignore_index=True)
+        if st.button("💾 NOTU KAYDET", use_container_width=True):
+            dfn = load_mukellef_not()
+            dfn2 = dfn.copy()
+            m = dfn2["VKN"].astype(str) == str(vkn)
+            if m.any():
+                idx = dfn2[m].index[0]
+                dfn2.loc[idx, "Mükellef"] = str(mukellef)
+                dfn2.loc[idx, "Notlar"] = str(muk_not).strip()
+                dfn2.loc[idx, "GuncellemeZamani"] = now_str()
+            else:
+                dfn2 = pd.concat([dfn2, pd.DataFrame([{
+                    "VKN": str(vkn),
+                    "Mükellef": str(mukellef),
+                    "Notlar": str(muk_not).strip(),
+                    "GuncellemeZamani": now_str()
+                }])], ignore_index=True)
 
-                save_excel_safe(dfn2, MUKELLEF_NOT_DOSYASI)
-                st.success("Not kaydedildi.")
-                st.rerun()
-        with cN2:
-            st.markdown('<div class="small">İpucu: Mükellef değiştirince notlar otomatik gelir.</div>', unsafe_allow_html=True)
+            save_excel_safe(dfn2, MUKELLEF_NOT_DOSYASI, backup_path=None)
+            st.success("Not kaydedildi.")
+            st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Orta bölüm: Liste + filtreler
-    st.markdown('<div class="card"><h3>📌 Yapılacak İşler</h3><div class="hint">Filtreleyin, seçin ve aynı ekranda güncelleyin.</div>', unsafe_allow_html=True)
+    # LISTE + GÜNCELLE
+    st.markdown('<div class="card"><h3>📌 Yapılacak İşler</h3><div class="hint">Bu liste kalıcıdır. Silme yoktur.</div>', unsafe_allow_html=True)
 
     dfy = load_yapilacak_isler()
 
@@ -530,12 +596,11 @@ elif secim == "2. KDV Analiz Robotu":
         view = view[view["_gecik"] == True]
 
     view = view.sort_values(by=["_gecik","_son"], ascending=[False, True])
-
     st.dataframe(view.drop(columns=["_son","_gecik"], errors="ignore"), use_container_width=True)
+
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Alt bölüm: Seçili kayıt işlemleri
-    st.markdown('<div class="card"><h3>🛠️ Seçili Yapılacak İş</h3><div class="hint">Durum/son tarih/not güncelleyin. İsterseniz WhatsApp hatırlatma gönderin.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="card"><h3>🛠️ Seçili Yapılacak İş</h3><div class="hint">Sadece güncelleme yapılır. Kayıt silme yoktur.</div>', unsafe_allow_html=True)
 
     if view.empty:
         st.info("Gösterilecek kayıt yok.")
@@ -548,7 +613,6 @@ elif secim == "2. KDV Analiz Robotu":
             new_status = st.selectbox("Durum", ["AÇIK","İNCELEMEDE","KAPANDI","İPTAL"], index=0)
             new_due = st.text_input("Son Tarih (YYYY-MM-DD)", value=str(row.get("SonTarih","")))
             new_note = st.text_area("Not (Bu kayıt)", value=str(row.get("Not","")), height=110)
-
         with b:
             st.markdown("**Hatırlatma / Mesaj**")
             target = st.selectbox("Gönder", ["Gönderme", "Sorumlu Personele", "Mükellefe", "Serbest Numara"])
@@ -560,18 +624,22 @@ elif secim == "2. KDV Analiz Robotu":
                 all_m = st.checkbox("Mükellefe TÜM numara", value=True)
 
         if st.button("💾 GÜNCELLE", type="primary", use_container_width=True):
-            idx = dfy[dfy["IsID"].astype(str) == str(sec_id)].index[0]
-            dfy.loc[idx, "Durum"] = new_status
-            dfy.loc[idx, "SonTarih"] = str(new_due).strip()
-            dfy.loc[idx, "Not"] = str(new_note).strip()
-            dfy.loc[idx, "GuncellemeZamani"] = now_str()
-            if new_status == "KAPANDI" and not str(dfy.loc[idx, "KapanisZamani"]).strip():
-                dfy.loc[idx, "KapanisZamani"] = now_str()
+            updates = {
+                "Durum": new_status,
+                "SonTarih": str(new_due).strip(),
+                "Not": str(new_note).strip(),
+                "GuncellemeZamani": now_str()
+            }
+            if new_status == "KAPANDI":
+                updates["KapanisZamani"] = now_str()
 
-            save_excel_safe(dfy, YAPILACAK_IS_DOSYASI)
-            cur = dfy.loc[idx].to_dict()
+            # 🔒 SADECE GÜNCELLE — ASLA SİLMEZ
+            update_yapilacak_is(sec_id, updates)
 
             # WhatsApp
+            cur_df = load_yapilacak_isler()
+            cur = cur_df[cur_df["IsID"].astype(str) == str(sec_id)].iloc[0].to_dict()
+
             if target != "Gönderme":
                 if target == "Sorumlu Personele":
                     tel = normalize_phone(cur.get("SorumluTel",""))
@@ -594,11 +662,8 @@ elif secim == "2. KDV Analiz Robotu":
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    with st.expander("📄 Beyanname Analizi (Opsiyonel)"):
-        st.info("Analiz ekranını da bu stile göre entegre edip canlı akış paneli ekleyebiliriz.")
-
 # =========================================================
-# 6) 3. PROFESYONEL MESAJ
+# 8) 3. PROFESYONEL MESAJ
 # =========================================================
 elif secim == "3. Profesyonel Mesaj":
     st.markdown("""
@@ -637,7 +702,7 @@ elif secim == "3. Profesyonel Mesaj":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================================================
-# 7) 4. TASDİK ROBOTU
+# 9) 4. TASDİK ROBOTU
 # =========================================================
 elif secim == "4. Tasdik Robotu":
     st.markdown("""
@@ -655,7 +720,6 @@ elif secim == "4. Tasdik Robotu":
 
     with t2:
         st.markdown('<div class="card"><h3>👥 Personel Yönetimi</h3><div class="hint">Yeni personel ekleyin veya numarasını güncelleyin.</div>', unsafe_allow_html=True)
-
         dfp = load_personel()
 
         a, b, c = st.columns([2, 2, 1])
@@ -680,7 +744,7 @@ elif secim == "4. Tasdik Robotu":
                     dfp.loc[idx, "Aktif"] = p_aktif
                 else:
                     dfp = pd.concat([dfp, pd.DataFrame([{"Personel":p_ad.strip(), "Telefon":tel, "Aktif":p_aktif}])], ignore_index=True)
-                save_excel_safe(dfp, PERSONEL_DOSYASI)
+                save_excel_safe(dfp, PERSONEL_DOSYASI, backup_path=None)
                 st.success("Kaydedildi.")
                 st.rerun()
 
@@ -688,5 +752,6 @@ elif secim == "4. Tasdik Robotu":
         st.markdown("</div>", unsafe_allow_html=True)
 
     with t3:
-        st.markdown('<div class="card"><h3>🗂️ Yapılacak İşler (Ham)</h3></div>', unsafe_allow_html=True)
+        st.markdown('<div class="card"><h3>🗂️ Yapılacak İşler (Ham)</h3><div class="hint">Silme yoktur. Tüm kayıtlar kalıcıdır.</div>', unsafe_allow_html=True)
         st.dataframe(load_yapilacak_isler(), use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
