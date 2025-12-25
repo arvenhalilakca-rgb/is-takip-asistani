@@ -27,7 +27,7 @@ KALICI_EXCEL_YOLU = "mukellef_db_kalici.xlsx"
 # Tek PDF içinde çoklu beyanname ayıracı
 BEYANNAME_AYRACI = "KATMA DEĞER VERGİSİ BEYANNAMESİ"
 
-# Aranacak ifadeler
+# Aranacak ifadeler (beyan)
 MATRAH_AYLIK_IFADESI = "Teslim ve Hizmetlerin Karşılığını Teşkil Eden Bedel (aylık)"
 KDV_TOPLAM_IFADESI = "Toplam Katma Değer Vergisi"
 KDV_HESAPLANAN_IFADESI = "Hesaplanan Katma Değer Vergisi"
@@ -60,7 +60,7 @@ st.markdown("""
 .card-sub {font-size: 12px; color: #666; margin-bottom: 10px;}
 .terminal-window {
     background-color: #1e1e1e; color: #f0f0f0; font-family: monospace;
-    padding: 15px; border-radius: 8px; height: 340px; overflow-y: auto;
+    padding: 15px; border-radius: 8px; height: 360px; overflow-y: auto;
     font-size: 13px; margin-bottom: 20px; border: 1px solid #333; line-height: 1.6;
 }
 </style>
@@ -74,14 +74,11 @@ if "sonuclar" not in st.session_state:
 if "mukellef_db" not in st.session_state:
     st.session_state["mukellef_db"] = None
 
-
 # ==========================================
 # 4) YARDIMCI FONKSİYONLAR
 # ==========================================
 def text_to_float(text) -> float:
-    """
-    TR format sayıları güvenle çevirir: 1.234.567,89 / 123456,78
-    """
+    """TR format sayıları güvenle çevirir: 1.234.567,89 / 123456,78"""
     try:
         if text is None:
             return 0.0
@@ -111,6 +108,13 @@ def para_formatla(deger: float) -> str:
         return "{:,.2f} TL".format(float(deger)).replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
         return "0,00 TL"
+
+
+def yuzde_formatla(deger: float) -> str:
+    try:
+        return "%{:,.2f}".format(float(deger)).replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "%0,00"
 
 
 def whatsapp_gonder(numara: str, mesaj: str) -> bool:
@@ -174,9 +178,7 @@ def pdf_to_full_text(pdf_file) -> str:
 
 
 def split_beyannameler(full_text: str):
-    """
-    Delimiter pozisyonlarına göre keserek bloklar üretir (deterministik).
-    """
+    """Delimiter pozisyonlarına göre keserek bloklar üretir (deterministik)."""
     if not full_text:
         return []
     matches = list(re.finditer(re.escape(BEYANNAME_AYRACI), full_text, flags=re.IGNORECASE))
@@ -194,9 +196,7 @@ def split_beyannameler(full_text: str):
 
 
 def first_amount_after_label(text: str, label: str, lookahead_chars: int = 520) -> float:
-    """
-    label sonrası pencerede SADECE para formatlı ilk tutarı yakalar.
-    """
+    """label sonrası pencerede SADECE para formatlı ilk tutarı yakalar."""
     if not text:
         return 0.0
     try:
@@ -218,9 +218,9 @@ def first_amount_after_label(text: str, label: str, lookahead_chars: int = 520) 
 def pos_bul_istenen_satirdan(text: str) -> float:
     """
     POS geliri: 'Kredi Kartı İle Tahsil Edilen ... KDV Dahil ... Bedel' satırından okunur.
-    Satır bölünmelerine dayanıklı olacak şekilde:
+    Satır bölünmelerine dayanıklı:
     - "Kredi Kartı İle Tahsil Edilen" bulunan satırdan itibaren birkaç satır birleştirilir.
-    - Bu birleşimde para formatlı ilk tutar POS kabul edilir.
+    - Birleşimde para formatlı ilk tutar POS kabul edilir.
     """
     if not text:
         return 0.0
@@ -238,10 +238,9 @@ def pos_bul_istenen_satirdan(text: str) -> float:
 
         for i, ln in enumerate(lines):
             if re.search(re.escape(k1), ln, flags=re.IGNORECASE):
-                window_lines = lines[i:i + 8]
+                window_lines = lines[i:i + 10]
                 joined = " ".join(window_lines)
 
-                # Hedef satırın ruhu var mı? (tam cümle bazen bölünüyor)
                 has_all = (
                     re.search(k1, joined, flags=re.IGNORECASE)
                     and re.search(k2, joined, flags=re.IGNORECASE)
@@ -257,7 +256,7 @@ def pos_bul_istenen_satirdan(text: str) -> float:
                             return val
 
                 # Yedek: bu bölgedeki satırlarda ilk para tutarı
-                for j in range(i, min(i + 15, len(lines))):
+                for j in range(i, min(i + 20, len(lines))):
                     amt2 = re.search(AMOUNT_REGEX, lines[j])
                     if amt2:
                         val2 = text_to_float(amt2.group(1))
@@ -269,6 +268,72 @@ def pos_bul_istenen_satirdan(text: str) -> float:
         return 0.0
 
 
+def donem_bul(block_text: str):
+    """Beyanname bloğundan (Ay, Yıl) yakalar."""
+    if not block_text:
+        return (None, None)
+
+    aylar = [
+        "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+        "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"
+    ]
+
+    yil = None
+    ay = None
+
+    m_yil = re.search(r"Yıl\s*[\r\n\s]*?(20\d{2})", block_text, flags=re.IGNORECASE)
+    if m_yil:
+        yil = m_yil.group(1)
+    else:
+        m_yil2 = re.search(r"\b(20\d{2})\b", block_text)
+        if m_yil2:
+            yil = m_yil2.group(1)
+
+    for a in aylar:
+        if re.search(rf"\b{re.escape(a)}\b", block_text, flags=re.IGNORECASE):
+            ay = a
+            break
+
+    return (ay, yil)
+
+
+def risk_mesaji_olustur(row) -> str:
+    """WhatsApp için göze çarpan risk mesajı üretir (Ay/Yıl dahil)."""
+    block_text = row.get("BlokMetin", "") or ""
+    ay, yil = donem_bul(block_text)
+
+    if ay and yil:
+        donem_str = f"{ay} / {yil}"
+    elif yil and not ay:
+        donem_str = f"{yil}"
+    elif ay and not yil:
+        donem_str = f"{ay}"
+    else:
+        donem_str = "Bilinmiyor"
+
+    pos = float(row.get("POS", 0.0) or 0.0)
+    beyan = float(row.get("Beyan", 0.0) or 0.0)
+    fark = float(row.get("Fark", 0.0) or 0.0)
+
+    oran = (fark / beyan * 100.0) if beyan > 0 else 0.0
+
+    mesaj = (
+        "🚨🚨 *KDV RİSK ALARMI* 🚨🚨\n"
+        f"📅 *Dönem:* {donem_str}\n"
+        "━━━━━━━━━━━━━━━━\n"
+        f"🏢 *Firma:* {row.get('Mükellef','')}\n"
+        f"🆔 *VKN/TCKN:* {row.get('VKN','')}\n"
+        "━━━━━━━━━━━━━━━━\n"
+        f"💳 *POS (KDV Dahil):* {para_formatla(pos)}\n"
+        f"🧾 *Beyan (Matrah(Aylık)+KDV):* {para_formatla(beyan)}\n"
+        f"📌 *FARK:* {para_formatla(fark)}\n"
+        f"📈 *Sapma Oranı:* {yuzde_formatla(oran)}\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "⚠️ *İnceleme Önerisi:* POS tahsilatı beyan toplamını aşıyor."
+    )
+    return mesaj
+
+
 def log_yaz(logs, terminal, msg, color="#f0f0f0"):
     logs.append(f"<span style='color:{color};'>{msg}</span>")
     terminal.markdown(
@@ -278,9 +343,7 @@ def log_yaz(logs, terminal, msg, color="#f0f0f0"):
 
 
 def kalici_db_yukle():
-    """
-    Uygulama açılışında kalıcı excel varsa otomatik yükler.
-    """
+    """Uygulama açılışında kalıcı excel varsa otomatik yükler."""
     if os.path.exists(KALICI_EXCEL_YOLU):
         try:
             raw_df = pd.read_excel(KALICI_EXCEL_YOLU, dtype=str, header=None)
@@ -348,10 +411,9 @@ if secim == "1. Excel Listesi Yükle":
             )
             df = df.fillna("")
 
-            # Session'a al
             st.session_state["mukellef_db"] = df
 
-            # Kalıcı kaydet (header=False; sizin eski şemanızla uyumlu)
+            # Kalıcı kaydet (header=False; eski şema ile uyumlu)
             df_out = df[["A_UNVAN", "B_TC", "C_VKN", "D_TEL"]]
             df_out.to_excel(KALICI_EXCEL_YOLU, index=False, header=False)
 
@@ -360,7 +422,6 @@ if secim == "1. Excel Listesi Yükle":
         except Exception as e:
             st.error(f"❌ Dosya okunurken hata: {e}")
 
-    # Eğer zaten kalıcı yüklüyse bilgi ver
     if uploaded_file is None and st.session_state.get("mukellef_db") is not None:
         st.success(f"✅ Kayıtlı liste hazır. Toplam {len(st.session_state['mukellef_db'])} mükellef.")
         st.dataframe(st.session_state["mukellef_db"].head(20), use_container_width=True)
@@ -478,7 +539,8 @@ elif secim == "2. KDV Analiz Robotu":
                     "POS": pos,
                     "Beyan": beyan_toplami,
                     "Fark": fark,
-                    "Durum": durum
+                    "Durum": durum,
+                    "BlokMetin": block  # WhatsApp mesajında Ay/Yıl yakalamak için
                 })
 
                 time.sleep(0.01)
@@ -529,27 +591,21 @@ elif secim == "2. KDV Analiz Robotu":
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
+
                         with col2:
                             st.write("")
                             if st.button("🚨 İHBAR ET", key=f"ihbar_{i}", type="primary", use_container_width=True):
-                                mesaj = (
-                                    "⚠️ *KDV RİSK UYARISI*\n\n"
-                                    f"*Firma:* {row['Mükellef']}\n"
-                                    f"*VKN/TCKN:* {row['VKN']}\n"
-                                    f"*POS:* {para_formatla(row['POS'])}\n"
-                                    f"*Beyan (Matrah(Aylık)+KDV):* {para_formatla(row['Beyan'])}\n"
-                                    f"*Fark:* {para_formatla(row['Fark'])}"
-                                )
+                                mesaj = risk_mesaji_olustur(row.to_dict())
                                 if whatsapp_gonder("SABIT", mesaj):
                                     st.toast(f"✅ {row['Mükellef']} için ihbar gönderildi.")
                 else:
                     st.success("Riskli bulunan mükellef yok.")
 
             with tab2:
-                st.dataframe(temizler, use_container_width=True)
+                st.dataframe(temizler.drop(columns=["BlokMetin"], errors="ignore"), use_container_width=True)
 
             with tab3:
-                st.dataframe(okunamayanlar, use_container_width=True)
+                st.dataframe(okunamayanlar.drop(columns=["BlokMetin"], errors="ignore"), use_container_width=True)
 
 # ==========================================
 # 8) 3. MENÜ: PROFESYONEL MESAJ
@@ -558,7 +614,7 @@ elif secim == "3. Profesyonel Mesaj":
     st.title("📤 Profesyonel Mesaj Gönderimi")
 
     if st.session_state.get("mukellef_db") is not None:
-        df = st.session_state["mukellef_db"]
+        df = st.session_state.get("mukellef_db")
         kisi = st.selectbox("Kişi", df["A_UNVAN"])
         tel = df[df["A_UNVAN"] == kisi].iloc[0].get("D_TEL", "")
         st.write(f"Telefon Numarası: {tel}")
