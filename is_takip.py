@@ -11,7 +11,7 @@ from datetime import datetime
 # 1) AYARLAR & SABİTLER (GENEL YAPI KORUNUR)
 # ==========================================
 st.set_page_config(
-    page_title="Müşavir Kulesi (Canlı Akış & Akıllı Okuyucu)",
+    page_title="Müşavir Kulesi (Canlı Akış + İş Takip)",
     page_icon="🗼",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -22,11 +22,11 @@ ID_INSTANCE = st.secrets.get("ID_INSTANCE", "YOUR_INSTANCE_ID")
 API_TOKEN = st.secrets.get("API_TOKEN", "YOUR_API_TOKEN")
 SABIT_IHBAR_NO = "905351041616"
 
-# Kalıcı mükellef dosyası
+# Kalıcı dosyalar
 KALICI_EXCEL_YOLU = "mukellef_db_kalici.xlsx"
-
-# Ay ay arşiv dosyası
 ARSIV_DOSYASI = "arsiv_risk_kayitlari.xlsx"
+PERSONEL_DOSYASI = "personel_db.xlsx"
+IS_TAKIP_DOSYASI = "is_takip.xlsx"
 
 # Tek PDF içinde çoklu beyanname ayıracı
 BEYANNAME_AYRACI = "KATMA DEĞER VERGİSİ BEYANNAMESİ"
@@ -42,11 +42,9 @@ POS_SATIRI_TAM = "Kredi Kartı İle Tahsil Edilen Teslim ve Hizmetlerin KDV Dahi
 # SADECE PARA FORMATINI yakala
 AMOUNT_REGEX = r"(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})"
 
-# Risk eşiği (TL)
+# Risk eşiği
 RISK_ESIK = 50.0
-
-# Uçuk değerleri elemek için üst limit
-MAX_TUTAR_SANITY = 200_000_000  # 200 milyon TL
+MAX_TUTAR_SANITY = 200_000_000
 
 # ==========================================
 # 2) CSS
@@ -67,6 +65,7 @@ st.markdown("""
     padding: 15px; border-radius: 8px; height: 360px; overflow-y: auto;
     font-size: 13px; margin-bottom: 20px; border: 1px solid #333; line-height: 1.6;
 }
+.small-note {font-size: 12px; color:#666;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -77,10 +76,26 @@ if "sonuclar" not in st.session_state:
     st.session_state["sonuclar"] = None
 if "mukellef_db" not in st.session_state:
     st.session_state["mukellef_db"] = None
+if "personel_db" not in st.session_state:
+    st.session_state["personel_db"] = None
+if "is_takip_db" not in st.session_state:
+    st.session_state["is_takip_db"] = None
 
 # ==========================================
 # 4) YARDIMCI FONKSİYONLAR
 # ==========================================
+def now_str():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def normalize_phone(phone: str) -> str:
+    p = re.sub(r"\D", "", str(phone or ""))
+    # kullanıcı 0 ile girerse 90 ekleyelim basitçe
+    if len(p) == 10:  # 5xx...
+        p = "90" + p
+    if len(p) == 11 and p.startswith("0"):
+        p = "9" + p  # 0xxxxxxxxxx -> 90xxxxxxxxxx
+    return p
+
 def text_to_float(text) -> float:
     try:
         if text is None:
@@ -89,7 +104,6 @@ def text_to_float(text) -> float:
         t = re.sub(r"[^0-9\.,]", "", t)
         if not t:
             return 0.0
-
         if "," in t and "." in t:
             if t.rfind(",") > t.rfind("."):
                 t = t.replace(".", "").replace(",", ".")
@@ -119,6 +133,7 @@ def whatsapp_gonder(numara: str, mesaj: str) -> bool:
     if not numara or not ID_INSTANCE or not API_TOKEN:
         st.error("WhatsApp API bilgileri veya telefon numarası eksik.")
         return False
+    numara = normalize_phone(numara)
     target = f"{SABIT_IHBAR_NO}@c.us" if numara == "SABIT" else f"{numara}@c.us"
     url = f"https://api.green-api.com/waInstance{ID_INSTANCE}/sendMessage/{API_TOKEN}"
     try:
@@ -177,7 +192,6 @@ def split_beyannameler(full_text: str):
     matches = list(re.finditer(re.escape(BEYANNAME_AYRACI), full_text, flags=re.IGNORECASE))
     if not matches:
         return [full_text]
-
     starts = [m.start() for m in matches]
     blocks = []
     for i, s in enumerate(starts):
@@ -248,16 +262,11 @@ def pos_bul_istenen_satirdan(text: str) -> float:
         return 0.0
 
 def donem_bul(block_text: str):
-    """
-    Dönemi PDF üst bilgisinden yakalar.
-    'Yıl Ay 2024 ... Ocak' ve 'Yıl 2024 ... Ay ... Ocak' desenleri önceliklidir.
-    """
     t = str(block_text or "")
     if not t.strip():
         return (None, None)
 
     t1 = re.sub(r"\s+", " ", t).strip()
-
     ay_map = {
         "ocak": "Ocak",
         "şubat": "Şubat", "subat": "Şubat",
@@ -274,13 +283,13 @@ def donem_bul(block_text: str):
     }
     ay_regex = r"(ocak|şubat|subat|mart|nisan|mayıs|mayis|haziran|temmuz|ağustos|agustos|eylül|eylul|ekim|kasım|kasim|aralık|aralik)"
 
-    m = re.search(rf"Yıl\s*Ay\s*(20\d{{2}}).{{0,160}}?\b{ay_regex}\b", t1, flags=re.IGNORECASE)
+    m = re.search(rf"Yıl\s*Ay\s*(20\d{{2}}).{{0,200}}?\b{ay_regex}\b", t1, flags=re.IGNORECASE)
     if m:
         yil = m.group(1)
         ay = ay_map.get((m.group(2) or "").lower())
         return (ay, yil)
 
-    m2 = re.search(rf"Yıl\s*(20\d{{2}}).{{0,200}}?Ay.{{0,200}}?\b{ay_regex}\b", t1, flags=re.IGNORECASE)
+    m2 = re.search(rf"Yıl\s*(20\d{{2}}).{{0,240}}?Ay.{{0,240}}?\b{ay_regex}\b", t1, flags=re.IGNORECASE)
     if m2:
         yil = m2.group(1)
         ay = ay_map.get((m2.group(2) or "").lower())
@@ -291,11 +300,9 @@ def donem_bul(block_text: str):
     m_yil = re.search(r"\b(20\d{2})\b", t1)
     if m_yil:
         yil = m_yil.group(1)
-
     m_ay = re.search(rf"\b{ay_regex}\b", t1, flags=re.IGNORECASE)
     if m_ay:
         ay = ay_map.get(m_ay.group(1).lower())
-
     return (ay, yil)
 
 def risk_mesaji_olustur(row: dict) -> str:
@@ -328,7 +335,8 @@ def log_yaz(logs, terminal, msg, color="#f0f0f0"):
         unsafe_allow_html=True
     )
 
-def kalici_db_yukle():
+# ---------- Kalıcı DB yükle/kaydet ----------
+def kalici_mukellef_yukle():
     if os.path.exists(KALICI_EXCEL_YOLU):
         try:
             raw_df = pd.read_excel(KALICI_EXCEL_YOLU, dtype=str, header=None)
@@ -346,20 +354,67 @@ def kalici_db_yukle():
             return False
     return False
 
+def personel_yukle():
+    if os.path.exists(PERSONEL_DOSYASI):
+        try:
+            df = pd.read_excel(PERSONEL_DOSYASI, dtype=str)
+            if df.empty:
+                df = pd.DataFrame(columns=["Personel", "Telefon", "Aktif"])
+        except Exception:
+            df = pd.DataFrame(columns=["Personel", "Telefon", "Aktif"])
+    else:
+        df = pd.DataFrame(columns=["Personel", "Telefon", "Aktif"])
+    if "Aktif" not in df.columns:
+        df["Aktif"] = "Evet"
+    df = df.fillna("")
+    st.session_state["personel_db"] = df
+    return df
+
+def personel_kaydet(df: pd.DataFrame):
+    df = df.fillna("")
+    df.to_excel(PERSONEL_DOSYASI, index=False)
+    st.session_state["personel_db"] = df
+
+def is_takip_yukle():
+    if os.path.exists(IS_TAKIP_DOSYASI):
+        try:
+            df = pd.read_excel(IS_TAKIP_DOSYASI, dtype=str)
+        except Exception:
+            df = pd.DataFrame()
+    else:
+        df = pd.DataFrame()
+
+    if df.empty:
+        df = pd.DataFrame(columns=[
+            "IsID", "Dönem", "Mükellef", "VKN", "Tip", "Durum", "Öncelik",
+            "POS", "Beyan", "Fark", "Sorumlu", "SorumluTel",
+            "Not", "OlusturmaZamani", "GuncellemeZamani", "KapanisZamani"
+        ])
+    df = df.fillna("")
+    st.session_state["is_takip_db"] = df
+    return df
+
+def is_takip_kaydet(df: pd.DataFrame):
+    df = df.fillna("")
+    df.to_excel(IS_TAKIP_DOSYASI, index=False)
+    st.session_state["is_takip_db"] = df
+
+# ---------- Arşiv ----------
+def arsiv_oku() -> pd.DataFrame:
+    if os.path.exists(ARSIV_DOSYASI):
+        try:
+            return pd.read_excel(ARSIV_DOSYASI, dtype=str)
+        except Exception:
+            return pd.DataFrame()
+    return pd.DataFrame()
+
 def arsive_ekle(df_kayit: pd.DataFrame):
-    """
-    df_kayit: Sadece RISKLI + OKUNAMADI kayıtlarını, dönem bazında arşive ekler.
-    Aynı kayıt tekrar yazılmasın diye (Dönem+VKN+POS+Beyan+Fark) ile de-dup yapılır.
-    """
     if df_kayit is None or df_kayit.empty:
         return
-
-    # Arşive yazılacak kolonlar
     keep_cols = ["Dönem", "Mükellef", "VKN", "POS", "Beyan", "Fark", "Durum", "KayitZamani"]
     for c in keep_cols:
         if c not in df_kayit.columns:
             df_kayit[c] = ""
-
     df_kayit = df_kayit[keep_cols].copy()
 
     if os.path.exists(ARSIV_DOSYASI):
@@ -370,12 +425,9 @@ def arsive_ekle(df_kayit: pd.DataFrame):
     else:
         old = pd.DataFrame(columns=keep_cols)
 
-    # Numerikleri stringe çevirip aynı formatta karşılaştır
-    def norm(x):
-        return str(x).strip()
-
+    def norm(x): return str(x).strip()
     for col in ["POS", "Beyan", "Fark"]:
-        old[col] = old[col].apply(norm)
+        old[col] = old[col].apply(norm) if col in old.columns else ""
         df_kayit[col] = df_kayit[col].apply(norm)
 
     old["__key"] = old["Dönem"].astype(str) + "|" + old["VKN"].astype(str) + "|" + old["POS"] + "|" + old["Beyan"] + "|" + old["Fark"] + "|" + old["Durum"].astype(str)
@@ -384,20 +436,99 @@ def arsive_ekle(df_kayit: pd.DataFrame):
     combined = pd.concat([old, df_kayit], ignore_index=True)
     combined = combined.drop_duplicates(subset="__key", keep="first")
     combined = combined.drop(columns="__key", errors="ignore")
-
     combined.to_excel(ARSIV_DOSYASI, index=False)
 
-def arsiv_oku() -> pd.DataFrame:
-    if os.path.exists(ARSIV_DOSYASI):
-        try:
-            return pd.read_excel(ARSIV_DOSYASI, dtype=str)
-        except Exception:
-            return pd.DataFrame()
-    return pd.DataFrame()
+# ---------- İş Takip: otomatik iş aç ----------
+def oncelik_hesapla(fark: float, tip: str) -> str:
+    if tip == "OKUNAMADI":
+        return "Orta"
+    if fark >= 50000:
+        return "Yüksek"
+    if fark >= 10000:
+        return "Orta"
+    return "Düşük"
 
-# Açılışta otomatik yükle (varsa)
+def is_id_uret(donem: str, vkn: str, tip: str) -> str:
+    # stabil anahtar: donem|vkn|tip
+    return f"{donem}|{vkn}|{tip}"
+
+def is_olustur_veya_guncelle(df_is: pd.DataFrame, row: dict) -> pd.DataFrame:
+    """
+    RISKLI/OKUNAMADI için iş açar. Varsa günceller.
+    """
+    donem = row.get("Dönem", "Bilinmiyor")
+    vkn = row.get("VKN", "Bulunamadı")
+    tip = row.get("Durum", "")
+    isid = is_id_uret(donem, vkn, tip)
+
+    pos = row.get("POS", 0.0)
+    beyan = row.get("Beyan", 0.0)
+    fark = row.get("Fark", 0.0)
+
+    try:
+        fark_num = float(fark)
+    except Exception:
+        fark_num = 0.0
+
+    oncelik = oncelik_hesapla(fark_num, tip)
+
+    mask = (df_is["IsID"].astype(str) == str(isid))
+    if mask.any():
+        # güncelle
+        idx = df_is[mask].index[0]
+        df_is.loc[idx, "POS"] = str(pos)
+        df_is.loc[idx, "Beyan"] = str(beyan)
+        df_is.loc[idx, "Fark"] = str(fark)
+        df_is.loc[idx, "Öncelik"] = oncelik
+        df_is.loc[idx, "GuncellemeZamani"] = now_str()
+    else:
+        yeni = {
+            "IsID": isid,
+            "Dönem": donem,
+            "Mükellef": row.get("Mükellef", ""),
+            "VKN": vkn,
+            "Tip": tip,                 # RISKLI / OKUNAMADI
+            "Durum": "AÇIK",
+            "Öncelik": oncelik,
+            "POS": str(pos),
+            "Beyan": str(beyan),
+            "Fark": str(fark),
+            "Sorumlu": "",
+            "SorumluTel": "",
+            "Not": "",
+            "OlusturmaZamani": now_str(),
+            "GuncellemeZamani": now_str(),
+            "KapanisZamani": ""
+        }
+        df_is = pd.concat([df_is, pd.DataFrame([yeni])], ignore_index=True)
+
+    return df_is
+
+def atama_mesaji_olustur(is_row: dict) -> str:
+    return (
+        "📌 *YENİ İŞ ATAMASI*\n"
+        f"🆔 *İş:* {is_row.get('IsID','')}\n"
+        f"📅 *Dönem:* {is_row.get('Dönem','')}\n"
+        "━━━━━━━━━━━━━━━━\n"
+        f"🏢 *Firma:* {is_row.get('Mükellef','')}\n"
+        f"🆔 *VKN:* {is_row.get('VKN','')}\n"
+        f"⚠️ *Tip:* {is_row.get('Tip','')}\n"
+        f"⭐ *Öncelik:* {is_row.get('Öncelik','')}\n"
+        "━━━━━━━━━━━━━━━━\n"
+        f"💳 *POS:* {para_formatla(text_to_float(is_row.get('POS','0')))}\n"
+        f"🧾 *Beyan:* {para_formatla(text_to_float(is_row.get('Beyan','0')))}\n"
+        f"📌 *Fark:* {para_formatla(text_to_float(is_row.get('Fark','0')))}\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "Lütfen inceleyip sonuç/not giriniz."
+    )
+
+# ---------- Açılış yüklemeleri ----------
 if st.session_state.get("mukellef_db") is None:
-    kalici_db_yukle()
+    kalici_mukellef_yukle()
+if st.session_state.get("personel_db") is None:
+    personel_yukle()
+if st.session_state.get("is_takip_db") is None:
+    is_takip_yukle()
 
 # ==========================================
 # 5) ANA MENÜ (AYNEN KORUNUR)
@@ -408,17 +539,15 @@ with st.sidebar:
     secim = st.radio("MENÜ", ["1. Excel Listesi Yükle", "2. KDV Analiz Robotu", "3. Profesyonel Mesaj", "4. Tasdik Robotu"])
 
 # ==========================================
-# 6) 1. MENÜ: EXCEL YÜKLE (KALICI KAYIT DAHİL)
+# 6) 1. MENÜ: EXCEL YÜKLE (KALICI)
 # ==========================================
 if secim == "1. Excel Listesi Yükle":
     st.title("📂 Mükellef Veritabanı Yükle")
     st.info("Sütunlar: **A (Unvan), B (TCKN), C (VKN), D (Telefon)**. Bir kez yükleyince sistemde kalır.")
 
     colA, colB = st.columns([3, 2])
-
     with colA:
         uploaded_file = st.file_uploader("Excel Dosyasını Seçin", type=["xlsx", "xls"])
-
     with colB:
         st.write("")
         st.write("")
@@ -443,12 +572,9 @@ if secim == "1. Excel Listesi Yükle":
                 if raw_df.shape[1] > 3 else ""
             )
             df = df.fillna("")
-
             st.session_state["mukellef_db"] = df
-
             df_out = df[["A_UNVAN", "B_TC", "C_VKN", "D_TEL"]]
             df_out.to_excel(KALICI_EXCEL_YOLU, index=False, header=False)
-
             st.success(f"✅ Başarılı! {len(df)} mükellef bilgisi yüklendi ve kalıcı kaydedildi.")
             st.dataframe(df.head(20), use_container_width=True)
         except Exception as e:
@@ -459,10 +585,10 @@ if secim == "1. Excel Listesi Yükle":
         st.dataframe(st.session_state["mukellef_db"].head(20), use_container_width=True)
 
 # ==========================================
-# 7) 2. MENÜ: KDV ANALİZ ROBOTU (DETAYLI PROAKTİF AKIŞ + AYLIK ARŞİV)
+# 7) 2. MENÜ: KDV ANALİZ ROBOTU + İŞ TAKİP
 # ==========================================
 elif secim == "2. KDV Analiz Robotu":
-    st.title("🕵️‍♂️ KDV Analiz Üssü (Canlı Akış & Proaktif Detay)")
+    st.title("🕵️‍♂️ KDV Analiz Üssü (Canlı Akış + İş Takip)")
 
     if st.session_state.get("mukellef_db") is None:
         st.warning("⚠️ Mükellef listesi bulunamadı. '1. Excel Listesi Yükle' menüsünden bir kez yükleyin.")
@@ -515,7 +641,6 @@ elif secim == "2. KDV Analiz Robotu":
                 progress.progress(min(pct, 100))
                 pro_text.info(f"İlerleme: {done}/{total_blocks} (%{pct}) | {pdf_name} - Blok {idx}/{len(blocks)}")
 
-                # Dönem
                 ay, yil = donem_bul(block)
                 donem_str = "Bilinmiyor"
                 if ay and yil:
@@ -527,34 +652,17 @@ elif secim == "2. KDV Analiz Robotu":
 
                 log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Dönem: {donem_str}", color="#8ab4f8")
 
-                # VKN
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] VKN/TCKN aranıyor...", color="#d7d7d7")
                 vkn = vkn_bul(block)
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] VKN/TCKN: {vkn or 'Bulunamadı'}", color="#d7d7d7")
-
-                # Mükellef
                 isim = isim_eslestir_excel(vkn)
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Mükellef: {isim}", color="#d7d7d7")
 
-                # Matrah(Aylık)
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Matrah(Aylık) aranıyor...", color="#d7d7d7")
+                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] VKN/TCKN: {vkn or 'Bulunamadı'} | Mükellef: {isim}", color="#d7d7d7")
+
                 matrah = first_amount_after_label(block, MATRAH_AYLIK_IFADESI, lookahead_chars=620)
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Matrah(Aylık): {para_formatla(matrah)}", color="#d7d7d7")
-
-                # KDV
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] KDV aranıyor (Toplam KDV)...", color="#d7d7d7")
                 kdv = first_amount_after_label(block, KDV_TOPLAM_IFADESI, lookahead_chars=680)
                 if kdv == 0.0:
-                    log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Toplam KDV yok. Hesaplanan KDV deneniyor...", color="#ffc107")
                     kdv = first_amount_after_label(block, KDV_HESAPLANAN_IFADESI, lookahead_chars=780)
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] KDV: {para_formatla(kdv)}", color="#d7d7d7")
-
-                # POS
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] POS aranıyor (Kredi Kartı...KDV Dahil...Bedel)...", color="#d7d7d7")
                 pos = pos_bul_istenen_satirdan(block)
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] POS: {para_formatla(pos)}", color="#d7d7d7")
 
-                # Hesap
                 beyan_toplami = matrah + kdv
                 fark = pos - beyan_toplami
 
@@ -570,7 +678,7 @@ elif secim == "2. KDV Analiz Robotu":
 
                 log_yaz(
                     logs, terminal,
-                    f"[{pdf_name} | {idx}] BEYAN={para_formatla(beyan_toplami)} | FARK={para_formatla(fark)} | DURUM={durum}",
+                    f"[{pdf_name} | {idx}] Matrah={para_formatla(matrah)} | KDV={para_formatla(kdv)} | POS={para_formatla(pos)} | FARK={para_formatla(fark)} | {durum}",
                     color=renk
                 )
 
@@ -595,17 +703,25 @@ elif secim == "2. KDV Analiz Robotu":
         df_sonuc = pd.DataFrame(sonuclar) if sonuclar else pd.DataFrame()
         st.session_state["sonuclar"] = df_sonuc
 
-        # ✅ Analiz bitince: RISKLI + OKUNAMADI kayıtlarını arşive ekle
+        # Arşive ekle
         if not df_sonuc.empty:
             df_arsivlik = df_sonuc[df_sonuc["Durum"].isin(["RISKLI", "OKUNAMADI"])].copy()
             if not df_arsivlik.empty:
-                df_arsivlik["KayitZamani"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                df_arsivlik["KayitZamani"] = now_str()
                 arsive_ekle(df_arsivlik)
-                st.toast("📌 Riskli/Okunamayan kayıtlar dönem bazlı arşive işlendi.")
-            else:
-                st.toast("📌 Arşive eklenecek riskli/okunamayan kayıt yok.")
+                st.toast("📌 Riskli/Okunamayan kayıtlar arşive işlendi.")
 
-    # Sonuç ekranı
+        # İş aç/güncelle
+        df_is = is_takip_yukle()
+        if not df_sonuc.empty:
+            df_problem = df_sonuc[df_sonuc["Durum"].isin(["RISKLI", "OKUNAMADI"])].copy()
+            if not df_problem.empty:
+                for _, rr in df_problem.iterrows():
+                    df_is = is_olustur_veya_guncelle(df_is, rr.to_dict())
+                is_takip_kaydet(df_is)
+                st.toast("🗂️ İş Takip: Problemli kayıtlar için işler oluşturuldu/güncellendi.")
+
+    # Sonuç ekranı + İş Takip sekmesi
     if st.session_state.get("sonuclar") is not None:
         df_sonuc = st.session_state["sonuclar"]
         if not df_sonuc.empty:
@@ -618,12 +734,12 @@ elif secim == "2. KDV Analiz Robotu":
                 f"🚨 RİSKLİ ({len(riskliler)})",
                 f"✅ UYUMLU ({len(temizler)})",
                 f"❓ OKUNAMAYAN ({len(okunamayanlar)})",
-                "📊 AYLIK ARŞİV RAPOR"
+                "🗂️ İŞ TAKİP"
             ])
 
             with tab1:
                 if not riskliler.empty:
-                    st.error(f"Aşağıdaki {len(riskliler)} mükellefin POS satışı, (Matrah(Aylık)+KDV) toplamından yüksektir.")
+                    st.error(f"{len(riskliler)} kayıt risklidir. İsterseniz ihbar gönderin veya iş ataması yapın.")
                     for i, row in riskliler.iterrows():
                         col1, col2 = st.columns([4, 1])
                         with col1:
@@ -632,29 +748,21 @@ elif secim == "2. KDV Analiz Robotu":
                                 <div class='card-title'>{row['Mükellef']}</div>
                                 <div class='card-sub'>Dönem: {row['Dönem']} | VKN/TCKN: {row['VKN']}</div>
                                 <div style='display:flex; gap:15px; margin-top:10px'>
-                                    <div>
-                                        <span class='stat-lbl'>POS</span><br>
-                                        <span class='stat-val'>{para_formatla(row['POS'])}</span>
-                                    </div>
-                                    <div>
-                                        <span class='stat-lbl'>BEYAN (Matrah(Aylık)+KDV)</span><br>
-                                        <span class='stat-val'>{para_formatla(row['Beyan'])}</span>
-                                    </div>
+                                    <div><span class='stat-lbl'>POS</span><br><span class='stat-val'>{para_formatla(row['POS'])}</span></div>
+                                    <div><span class='stat-lbl'>BEYAN</span><br><span class='stat-val'>{para_formatla(row['Beyan'])}</span></div>
                                 </div>
                                 <div style='color:#d32f2f; font-weight:bold; margin-top:10px; font-size:16px;'>
                                     FARK: {para_formatla(row['Fark'])}
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
-
                         with col2:
-                            st.write("")
                             if st.button("🚨 İHBAR ET", key=f"ihbar_{i}", type="primary", use_container_width=True):
                                 mesaj = risk_mesaji_olustur(row.to_dict())
                                 if whatsapp_gonder("SABIT", mesaj):
-                                    st.toast(f"✅ {row['Mükellef']} için ihbar gönderildi.")
+                                    st.toast("✅ İhbar gönderildi.")
                 else:
-                    st.success("Riskli bulunan mükellef yok.")
+                    st.success("Riskli kayıt yok.")
 
             with tab2:
                 st.dataframe(temizler, use_container_width=True)
@@ -663,77 +771,112 @@ elif secim == "2. KDV Analiz Robotu":
                 st.dataframe(okunamayanlar, use_container_width=True)
 
             with tab4:
-                st.info("Bu bölüm, ay ay biriken *RISKLI + OKUNAMADI* kayıtlarının dönem sonu raporudur.")
-                arsiv_df = arsiv_oku()
+                st.info("Problemli kayıtlar otomatik iş olarak açılır. Buradan personele atayabilir, durum/not güncelleyebilirsiniz.")
+                df_is = is_takip_yukle()
+                df_personel = personel_yukle()
 
-                if arsiv_df.empty:
-                    st.warning("Henüz arşivde kayıt yok.")
+                # filtreler
+                c1, c2, c3 = st.columns([2, 2, 2])
+                with c1:
+                    donem_list = ["(Tümü)"] + sorted([d for d in df_is["Dönem"].astype(str).unique() if d.strip()])
+                    f_donem = st.selectbox("Dönem", donem_list)
+                with c2:
+                    durum_list = ["(Tümü)", "AÇIK", "İNCELEMEDE", "KAPANDI", "İPTAL"]
+                    f_durum = st.selectbox("Durum", durum_list)
+                with c3:
+                    tip_list = ["(Tümü)", "RISKLI", "OKUNAMADI"]
+                    f_tip = st.selectbox("Tip", tip_list)
+
+                view = df_is.copy()
+                if f_donem != "(Tümü)":
+                    view = view[view["Dönem"].astype(str) == f_donem]
+                if f_durum != "(Tümü)":
+                    view = view[view["Durum"].astype(str) == f_durum]
+                if f_tip != "(Tümü)":
+                    view = view[view["Tip"].astype(str) == f_tip]
+
+                st.subheader("İş Listesi")
+                st.dataframe(view, use_container_width=True)
+
+                st.divider()
+                st.subheader("İş Atama / Güncelleme")
+
+                is_ids = view["IsID"].astype(str).tolist()
+                if not is_ids:
+                    st.warning("Seçilebilecek iş yok.")
                 else:
-                    st.subheader("Arşiv (Ham Kayıtlar)")
-                    st.dataframe(arsiv_df, use_container_width=True)
+                    sec_isid = st.selectbox("İş Seçin (IsID)", is_ids)
 
-                    st.subheader("Dönem Bazlı Özet")
-                    # Dönem bazlı sayım + toplam fark
-                    # (Fark string olabilir; güvenli çevrim)
-                    def safe_float(x):
-                        try:
-                            return float(str(x).replace(".", "").replace(",", "."))
-                        except Exception:
-                            return 0.0
+                    sec_is = df_is[df_is["IsID"].astype(str) == str(sec_isid)]
+                    if sec_is.empty:
+                        st.error("İş bulunamadı.")
+                    else:
+                        sec_is_row = sec_is.iloc[0].to_dict()
 
-                    temp = arsiv_df.copy()
-                    temp["FarkNum"] = temp["Fark"].apply(safe_float)
+                        aktif_personel = df_personel[df_personel["Aktif"].astype(str).str.lower().isin(["evet", "yes", "true", "1"])]
+                        personel_options = ["(Atama Yok)"] + aktif_personel["Personel"].astype(str).tolist()
 
-                    ozet = (
-                        temp.groupby(["Dönem", "Durum"], dropna=False)
-                        .agg(Adet=("VKN", "count"), ToplamFark=("FarkNum", "sum"))
-                        .reset_index()
-                    )
-                    st.dataframe(ozet, use_container_width=True)
+                        colA, colB = st.columns([2, 2])
+                        with colA:
+                            sec_personel = st.selectbox("Sorumlu Personel", personel_options)
+                            yeni_durum = st.selectbox("Durum", ["AÇIK", "İNCELEMEDE", "KAPANDI", "İPTAL"])
+                            yeni_not = st.text_area("Not / Yapılan İşlem", value=str(sec_is_row.get("Not", "")), height=90)
 
-                    st.subheader("Dönem Sonu Genel Rapor (Durumlara göre)")
-                    genel = (
-                        temp.groupby(["Dönem"], dropna=False)
-                        .agg(
-                            RiskliAdet=("Durum", lambda s: (s == "RISKLI").sum()),
-                            OkunamadiAdet=("Durum", lambda s: (s == "OKUNAMADI").sum()),
-                            ToplamFark=("FarkNum", "sum"),
-                        )
-                        .reset_index()
-                    )
-                    st.dataframe(genel, use_container_width=True)
+                        with colB:
+                            st.markdown("**İş Özeti**")
+                            st.write(f"**Dönem:** {sec_is_row.get('Dönem','')}")
+                            st.write(f"**Firma:** {sec_is_row.get('Mükellef','')}")
+                            st.write(f"**VKN:** {sec_is_row.get('VKN','')}")
+                            st.write(f"**Tip:** {sec_is_row.get('Tip','')} | **Öncelik:** {sec_is_row.get('Öncelik','')}")
+                            st.caption("Atamayı kaydedince isterseniz personele WhatsApp bilgilendirmesi gönderilir.")
 
-                    # İndirilebilir Excel
-                    try:
-                        rapor_path = "donem_sonu_rapor.xlsx"
-                        with pd.ExcelWriter(rapor_path, engine="openpyxl") as writer:
-                            arsiv_df.to_excel(writer, index=False, sheet_name="ArsivHam")
-                            ozet.to_excel(writer, index=False, sheet_name="DonemDurumOzet")
-                            genel.to_excel(writer, index=False, sheet_name="DonemGenel")
-                        with open(rapor_path, "rb") as f:
-                            st.download_button(
-                                "⬇️ Dönem Sonu Raporu (Excel) İndir",
-                                data=f,
-                                file_name="donem_sonu_rapor.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True
-                            )
-                    except Exception as e:
-                        st.error(f"Rapor dosyası hazırlanamadı: {e}")
+                            gonder_bildir = st.checkbox("Atama Bildirimi WhatsApp Gönder", value=True)
+
+                        if st.button("💾 Atamayı / Güncellemeyi Kaydet", type="primary", use_container_width=True):
+                            # personel tel
+                            sorumlu_tel = ""
+                            if sec_personel != "(Atama Yok)":
+                                res = aktif_personel[aktif_personel["Personel"].astype(str) == sec_personel]
+                                if not res.empty:
+                                    sorumlu_tel = normalize_phone(res.iloc[0].get("Telefon", ""))
+
+                            # güncelle
+                            idx = df_is[df_is["IsID"].astype(str) == str(sec_isid)].index[0]
+                            df_is.loc[idx, "Sorumlu"] = "" if sec_personel == "(Atama Yok)" else sec_personel
+                            df_is.loc[idx, "SorumluTel"] = sorumlu_tel
+                            df_is.loc[idx, "Durum"] = yeni_durum
+                            df_is.loc[idx, "Not"] = yeni_not
+                            df_is.loc[idx, "GuncellemeZamani"] = now_str()
+                            if yeni_durum == "KAPANDI":
+                                if not str(df_is.loc[idx, "KapanisZamani"]).strip():
+                                    df_is.loc[idx, "KapanisZamani"] = now_str()
+                            else:
+                                # kapanıştan geri dönülürse kapanış zamanını silmeyelim (isteğe bağlı)
+                                pass
+
+                            is_takip_kaydet(df_is)
+                            st.success("Kaydedildi.")
+
+                            # WhatsApp bilgilendirme
+                            if gonder_bildir and sorumlu_tel:
+                                msg = atama_mesaji_olustur(df_is.loc[idx].to_dict())
+                                ok = whatsapp_gonder(sorumlu_tel, msg)
+                                if ok:
+                                    st.toast("📨 Personel bilgilendirildi.")
+                                else:
+                                    st.warning("Personel bilgilendirilemedi (WhatsApp).")
 
 # ==========================================
 # 8) 3. MENÜ: PROFESYONEL MESAJ
 # ==========================================
 elif secim == "3. Profesyonel Mesaj":
     st.title("📤 Profesyonel Mesaj Gönderimi")
-
     if st.session_state.get("mukellef_db") is not None:
         df = st.session_state.get("mukellef_db")
         kisi = st.selectbox("Kişi", df["A_UNVAN"])
         tel = df[df["A_UNVAN"] == kisi].iloc[0].get("D_TEL", "")
         st.write(f"Telefon Numarası: {tel}")
         txt = st.text_area("Mesajınız:")
-
         if st.button("Gönder"):
             if whatsapp_gonder(tel, txt):
                 st.success("Mesaj gönderildi.")
@@ -743,17 +886,95 @@ elif secim == "3. Profesyonel Mesaj":
         st.warning("Lütfen önce '1. Excel Listesi Yükle' menüsünden mükellef listenizi yükleyin.")
 
 # ==========================================
-# 9) 4. MENÜ: TASDİK ROBOTU
+# 9) 4. MENÜ: TASDİK ROBOTU (MÜKELLEF + PERSONEL)
 # ==========================================
 elif secim == "4. Tasdik Robotu":
-    st.title("🤖 Yüklenen Mükellef Listesi (Tasdik)")
+    st.title("🤖 Kayıtlar (Tasdik)")
 
-    if st.session_state.get("mukellef_db") is not None:
-        st.info(f"Sistemde kayıtlı {len(st.session_state['mukellef_db'])} mükellef bulunmaktadır.")
-        st.dataframe(st.session_state["mukellef_db"], use_container_width=True)
-        if os.path.exists(KALICI_EXCEL_YOLU):
-            st.caption("Not: Liste kalıcı kayıt dosyasından otomatik yüklenmektedir.")
-        if os.path.exists(ARSIV_DOSYASI):
-            st.caption("Not: Riskli/okunamayan kayıtlar dönem bazlı arşive yazılmaktadır.")
-    else:
-        st.warning("Görüntülenecek bir liste yok. '1. Excel Listesi Yükle' menüsünden bir kez yükleyin.")
+    tabA, tabB, tabC = st.tabs(["📋 Mükellef Listesi", "👥 Personel / Numara Yönetimi", "📊 Arşiv Durumu"])
+
+    with tabA:
+        if st.session_state.get("mukellef_db") is not None:
+            st.info(f"Sistemde kayıtlı {len(st.session_state['mukellef_db'])} mükellef bulunmaktadır.")
+            st.dataframe(st.session_state["mukellef_db"], use_container_width=True)
+            if os.path.exists(KALICI_EXCEL_YOLU):
+                st.caption("Not: Mükellef listesi kalıcı dosyadan otomatik yüklenir.")
+        else:
+            st.warning("Mükellef listesi yok. '1. Excel Listesi Yükle' menüsünden yükleyin.")
+
+    with tabB:
+        st.subheader("Personel Ekle (Numara Ekleme Butonu)")
+        df_personel = personel_yukle()
+
+        col1, col2, col3 = st.columns([2, 2, 1])
+        with col1:
+            p_ad = st.text_input("Personel Adı Soyadı")
+        with col2:
+            p_tel = st.text_input("Telefon (örn 905xxxxxxxxx veya 05xxxxxxxxx)")
+        with col3:
+            p_aktif = st.selectbox("Aktif", ["Evet", "Hayır"])
+
+        if st.button("➕ Personel / Numara Ekle", type="primary", use_container_width=True):
+            if not str(p_ad).strip():
+                st.error("Personel adı boş olamaz.")
+            elif not normalize_phone(p_tel):
+                st.error("Telefon numarası geçersiz.")
+            else:
+                tel_norm = normalize_phone(p_tel)
+                # Aynı isim varsa güncelle, yoksa ekle
+                mask = df_personel["Personel"].astype(str).str.strip().str.lower() == str(p_ad).strip().lower()
+                if mask.any():
+                    idx = df_personel[mask].index[0]
+                    df_personel.loc[idx, "Telefon"] = tel_norm
+                    df_personel.loc[idx, "Aktif"] = p_aktif
+                else:
+                    df_personel = pd.concat([df_personel, pd.DataFrame([{
+                        "Personel": str(p_ad).strip(),
+                        "Telefon": tel_norm,
+                        "Aktif": p_aktif
+                    }])], ignore_index=True)
+
+                personel_kaydet(df_personel)
+                st.success("Personel kaydedildi.")
+
+        st.divider()
+        st.subheader("Personel Listesi")
+        st.dataframe(df_personel, use_container_width=True)
+
+        st.subheader("Personel Sil / Pasifleştir")
+        if not df_personel.empty:
+            sec = st.selectbox("Personel Seç", df_personel["Personel"].astype(str).tolist())
+            colx, coly = st.columns([1, 1])
+            with colx:
+                if st.button("🚫 Pasifleştir", use_container_width=True):
+                    idx = df_personel[df_personel["Personel"].astype(str) == sec].index[0]
+                    df_personel.loc[idx, "Aktif"] = "Hayır"
+                    personel_kaydet(df_personel)
+                    st.success("Pasifleştirildi.")
+            with coly:
+                if st.button("🗑️ Sil", use_container_width=True):
+                    df_personel = df_personel[df_personel["Personel"].astype(str) != sec].copy()
+                    personel_kaydet(df_personel)
+                    st.success("Silindi.")
+        else:
+            st.warning("Henüz personel yok.")
+
+    with tabC:
+        st.subheader("Arşiv ve İş Takip Dosyaları")
+        st.write(f"📁 Arşiv dosyası: **{ARSIV_DOSYASI}** {'✅' if os.path.exists(ARSIV_DOSYASI) else '❌'}")
+        st.write(f"📁 İş takip dosyası: **{IS_TAKIP_DOSYASI}** {'✅' if os.path.exists(IS_TAKIP_DOSYASI) else '❌'}")
+        st.write(f"📁 Personel dosyası: **{PERSONEL_DOSYASI}** {'✅' if os.path.exists(PERSONEL_DOSYASI) else '❌'}")
+
+        ars = arsiv_oku()
+        if not ars.empty:
+            st.caption("Arşivden son 20 kayıt")
+            st.dataframe(ars.tail(20), use_container_width=True)
+        else:
+            st.info("Arşivde kayıt yok veya okunamadı.")
+
+        df_is = is_takip_yukle()
+        if not df_is.empty:
+            st.caption("İş takipten son 20 kayıt")
+            st.dataframe(df_is.tail(20), use_container_width=True)
+        else:
+            st.info("İş takipte kayıt yok veya okunamadı.")
