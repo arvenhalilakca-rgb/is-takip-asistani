@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 import pdfplumber
 import streamlit as st
+from datetime import datetime
 
 # ==========================================
 # 1) AYARLAR & SABİTLER (GENEL YAPI KORUNUR)
@@ -21,8 +22,11 @@ ID_INSTANCE = st.secrets.get("ID_INSTANCE", "YOUR_INSTANCE_ID")
 API_TOKEN = st.secrets.get("API_TOKEN", "YOUR_API_TOKEN")
 SABIT_IHBAR_NO = "905351041616"
 
-# Kalıcı mükellef dosyası (1 kez yükle, hep kalsın)
+# Kalıcı mükellef dosyası
 KALICI_EXCEL_YOLU = "mukellef_db_kalici.xlsx"
+
+# Ay ay arşiv dosyası
+ARSIV_DOSYASI = "arsiv_risk_kayitlari.xlsx"
 
 # Tek PDF içinde çoklu beyanname ayıracı
 BEYANNAME_AYRACI = "KATMA DEĞER VERGİSİ BEYANNAMESİ"
@@ -35,7 +39,7 @@ KDV_HESAPLANAN_IFADESI = "Hesaplanan Katma Değer Vergisi"
 # POS satırı (SİZİN İSTEDİĞİNİZ)
 POS_SATIRI_TAM = "Kredi Kartı İle Tahsil Edilen Teslim ve Hizmetlerin KDV Dahil Karşılığını Teşkil Eden Bedel"
 
-# SADECE PARA FORMATINI yakala (VKN/TCKN gibi düz rakamları yakalama)
+# SADECE PARA FORMATINI yakala
 AMOUNT_REGEX = r"(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})"
 
 # Risk eşiği (TL)
@@ -78,7 +82,6 @@ if "mukellef_db" not in st.session_state:
 # 4) YARDIMCI FONKSİYONLAR
 # ==========================================
 def text_to_float(text) -> float:
-    """TR format sayıları güvenle çevirir: 1.234.567,89 / 123456,78"""
     try:
         if text is None:
             return 0.0
@@ -87,7 +90,6 @@ def text_to_float(text) -> float:
         if not t:
             return 0.0
 
-        # TR: 1.234.567,89
         if "," in t and "." in t:
             if t.rfind(",") > t.rfind("."):
                 t = t.replace(".", "").replace(",", ".")
@@ -101,20 +103,17 @@ def text_to_float(text) -> float:
     except Exception:
         return 0.0
 
-
 def para_formatla(deger: float) -> str:
     try:
         return "{:,.2f} TL".format(float(deger)).replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
         return "0,00 TL"
 
-
 def yuzde_formatla(deger: float) -> str:
     try:
         return "%{:,.2f}".format(float(deger)).replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
         return "%0,00"
-
 
 def whatsapp_gonder(numara: str, mesaj: str) -> bool:
     if not numara or not ID_INSTANCE or not API_TOKEN:
@@ -128,7 +127,6 @@ def whatsapp_gonder(numara: str, mesaj: str) -> bool:
     except requests.exceptions.RequestException as e:
         st.error(f"WhatsApp gönderim hatası: {e}")
         return False
-
 
 def vkn_bul(text: str):
     if not text:
@@ -144,7 +142,6 @@ def vkn_bul(text: str):
         if m:
             return m.group(1)
     return None
-
 
 def isim_eslestir_excel(numara):
     if st.session_state.get("mukellef_db") is None:
@@ -165,7 +162,6 @@ def isim_eslestir_excel(numara):
 
     return f"Listede Yok ({num})"
 
-
 def pdf_to_full_text(pdf_file) -> str:
     full = []
     with pdfplumber.open(pdf_file) as pdf:
@@ -175,9 +171,7 @@ def pdf_to_full_text(pdf_file) -> str:
                 full.append(t)
     return "\n".join(full)
 
-
 def split_beyannameler(full_text: str):
-    """Delimiter pozisyonlarına göre keserek bloklar üretir (deterministik)."""
     if not full_text:
         return []
     matches = list(re.finditer(re.escape(BEYANNAME_AYRACI), full_text, flags=re.IGNORECASE))
@@ -193,9 +187,7 @@ def split_beyannameler(full_text: str):
             blocks.append(block)
     return blocks
 
-
 def first_amount_after_label(text: str, label: str, lookahead_chars: int = 520) -> float:
-    """label sonrası pencerede SADECE para formatlı ilk tutarı yakalar."""
     if not text:
         return 0.0
     try:
@@ -213,15 +205,9 @@ def first_amount_after_label(text: str, label: str, lookahead_chars: int = 520) 
     except Exception:
         return 0.0
 
-
 def pos_bul_istenen_satirdan(text: str) -> float:
-    """
-    POS geliri: 'Kredi Kartı İle Tahsil Edilen ... KDV Dahil ... Bedel' satırından okunur.
-    Satır bölünmelerine dayanıklı.
-    """
     if not text:
         return 0.0
-
     try:
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         if not lines:
@@ -251,31 +237,25 @@ def pos_bul_istenen_satirdan(text: str) -> float:
                         if 0 < val <= MAX_TUTAR_SANITY:
                             return val
 
-                # yedek: bu bölgedeki satırlarda ilk para tutarı
                 for j in range(i, min(i + 20, len(lines))):
                     amt2 = re.search(AMOUNT_REGEX, lines[j])
                     if amt2:
                         val2 = text_to_float(amt2.group(1))
                         if 0 < val2 <= MAX_TUTAR_SANITY:
                             return val2
-
         return 0.0
     except Exception:
         return 0.0
 
-
 def donem_bul(block_text: str):
     """
-    PDF'teki gerçek yapıya göre dönem yakalama:
-    Genelde şu akış var:
-      DÖNEM TİPİ  Aylık  Yıl  Ay  2024  ... (VERGİ DAİRESİ/MALMÜDÜRLÜĞÜ)  Ocak
-    Bu yüzden 'Yıl Ay 2024 .... Ocak' desenini tek satıra indirip yakalıyoruz.
+    Dönemi PDF üst bilgisinden yakalar.
+    'Yıl Ay 2024 ... Ocak' ve 'Yıl 2024 ... Ay ... Ocak' desenleri önceliklidir.
     """
     t = str(block_text or "")
     if not t.strip():
         return (None, None)
 
-    # whitespace normalize
     t1 = re.sub(r"\s+", " ", t).strip()
 
     ay_map = {
@@ -294,23 +274,18 @@ def donem_bul(block_text: str):
     }
     ay_regex = r"(ocak|şubat|subat|mart|nisan|mayıs|mayis|haziran|temmuz|ağustos|agustos|eylül|eylul|ekim|kasım|kasim|aralık|aralik)"
 
-    # 1) En güçlü desen: "Yıl Ay 2024 ... Ocak"
-    m = re.search(rf"Yıl\s*Ay\s*(20\d{{2}}).{{0,120}}?\b{ay_regex}\b", t1, flags=re.IGNORECASE)
+    m = re.search(rf"Yıl\s*Ay\s*(20\d{{2}}).{{0,160}}?\b{ay_regex}\b", t1, flags=re.IGNORECASE)
     if m:
         yil = m.group(1)
-        ay_raw = (m.group(2) or "").lower()
-        ay = ay_map.get(ay_raw)
+        ay = ay_map.get((m.group(2) or "").lower())
         return (ay, yil)
 
-    # 2) Alternatif desen: "Yıl 2024 ... Ay ... Ocak"
-    m2 = re.search(rf"Yıl\s*(20\d{{2}}).{{0,120}}?Ay.{{0,120}}?\b{ay_regex}\b", t1, flags=re.IGNORECASE)
+    m2 = re.search(rf"Yıl\s*(20\d{{2}}).{{0,200}}?Ay.{{0,200}}?\b{ay_regex}\b", t1, flags=re.IGNORECASE)
     if m2:
         yil = m2.group(1)
-        ay_raw = (m2.group(2) or "").lower()
-        ay = ay_map.get(ay_raw)
+        ay = ay_map.get((m2.group(2) or "").lower())
         return (ay, yil)
 
-    # 3) Yedek: Yıl ayrı, ay adı ayrı
     yil = None
     ay = None
     m_yil = re.search(r"\b(20\d{2})\b", t1)
@@ -323,11 +298,8 @@ def donem_bul(block_text: str):
 
     return (ay, yil)
 
-
 def risk_mesaji_olustur(row: dict) -> str:
-    """WhatsApp için göze çarpan risk mesajı üretir (Ay/Yıl dahil)."""
     donem_str = row.get("Dönem", "") or "Bilinmiyor"
-
     pos = float(row.get("POS", 0.0) or 0.0)
     beyan = float(row.get("Beyan", 0.0) or 0.0)
     fark = float(row.get("Fark", 0.0) or 0.0)
@@ -349,7 +321,6 @@ def risk_mesaji_olustur(row: dict) -> str:
     )
     return mesaj
 
-
 def log_yaz(logs, terminal, msg, color="#f0f0f0"):
     logs.append(f"<span style='color:{color};'>{msg}</span>")
     terminal.markdown(
@@ -357,9 +328,7 @@ def log_yaz(logs, terminal, msg, color="#f0f0f0"):
         unsafe_allow_html=True
     )
 
-
 def kalici_db_yukle():
-    """Uygulama açılışında kalıcı excel varsa otomatik yükler."""
     if os.path.exists(KALICI_EXCEL_YOLU):
         try:
             raw_df = pd.read_excel(KALICI_EXCEL_YOLU, dtype=str, header=None)
@@ -377,6 +346,54 @@ def kalici_db_yukle():
             return False
     return False
 
+def arsive_ekle(df_kayit: pd.DataFrame):
+    """
+    df_kayit: Sadece RISKLI + OKUNAMADI kayıtlarını, dönem bazında arşive ekler.
+    Aynı kayıt tekrar yazılmasın diye (Dönem+VKN+POS+Beyan+Fark) ile de-dup yapılır.
+    """
+    if df_kayit is None or df_kayit.empty:
+        return
+
+    # Arşive yazılacak kolonlar
+    keep_cols = ["Dönem", "Mükellef", "VKN", "POS", "Beyan", "Fark", "Durum", "KayitZamani"]
+    for c in keep_cols:
+        if c not in df_kayit.columns:
+            df_kayit[c] = ""
+
+    df_kayit = df_kayit[keep_cols].copy()
+
+    if os.path.exists(ARSIV_DOSYASI):
+        try:
+            old = pd.read_excel(ARSIV_DOSYASI, dtype=str)
+        except Exception:
+            old = pd.DataFrame(columns=keep_cols)
+    else:
+        old = pd.DataFrame(columns=keep_cols)
+
+    # Numerikleri stringe çevirip aynı formatta karşılaştır
+    def norm(x):
+        return str(x).strip()
+
+    for col in ["POS", "Beyan", "Fark"]:
+        old[col] = old[col].apply(norm)
+        df_kayit[col] = df_kayit[col].apply(norm)
+
+    old["__key"] = old["Dönem"].astype(str) + "|" + old["VKN"].astype(str) + "|" + old["POS"] + "|" + old["Beyan"] + "|" + old["Fark"] + "|" + old["Durum"].astype(str)
+    df_kayit["__key"] = df_kayit["Dönem"].astype(str) + "|" + df_kayit["VKN"].astype(str) + "|" + df_kayit["POS"] + "|" + df_kayit["Beyan"] + "|" + df_kayit["Fark"] + "|" + df_kayit["Durum"].astype(str)
+
+    combined = pd.concat([old, df_kayit], ignore_index=True)
+    combined = combined.drop_duplicates(subset="__key", keep="first")
+    combined = combined.drop(columns="__key", errors="ignore")
+
+    combined.to_excel(ARSIV_DOSYASI, index=False)
+
+def arsiv_oku() -> pd.DataFrame:
+    if os.path.exists(ARSIV_DOSYASI):
+        try:
+            return pd.read_excel(ARSIV_DOSYASI, dtype=str)
+        except Exception:
+            return pd.DataFrame()
+    return pd.DataFrame()
 
 # Açılışta otomatik yükle (varsa)
 if st.session_state.get("mukellef_db") is None:
@@ -442,7 +459,7 @@ if secim == "1. Excel Listesi Yükle":
         st.dataframe(st.session_state["mukellef_db"].head(20), use_container_width=True)
 
 # ==========================================
-# 7) 2. MENÜ: KDV ANALİZ ROBOTU (DETAYLI PROAKTİF AKIŞ)
+# 7) 2. MENÜ: KDV ANALİZ ROBOTU (DETAYLI PROAKTİF AKIŞ + AYLIK ARŞİV)
 # ==========================================
 elif secim == "2. KDV Analiz Robotu":
     st.title("🕵️‍♂️ KDV Analiz Üssü (Canlı Akış & Proaktif Detay)")
@@ -575,7 +592,18 @@ elif secim == "2. KDV Analiz Robotu":
         pro_text.success(f"Analiz tamamlandı. Toplam {total_blocks} beyanname bloğu işlendi.")
         log_yaz(logs, terminal, "Analiz tamamlandı.", color="#28a745")
 
-        st.session_state["sonuclar"] = pd.DataFrame(sonuclar) if sonuclar else pd.DataFrame()
+        df_sonuc = pd.DataFrame(sonuclar) if sonuclar else pd.DataFrame()
+        st.session_state["sonuclar"] = df_sonuc
+
+        # ✅ Analiz bitince: RISKLI + OKUNAMADI kayıtlarını arşive ekle
+        if not df_sonuc.empty:
+            df_arsivlik = df_sonuc[df_sonuc["Durum"].isin(["RISKLI", "OKUNAMADI"])].copy()
+            if not df_arsivlik.empty:
+                df_arsivlik["KayitZamani"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                arsive_ekle(df_arsivlik)
+                st.toast("📌 Riskli/Okunamayan kayıtlar dönem bazlı arşive işlendi.")
+            else:
+                st.toast("📌 Arşive eklenecek riskli/okunamayan kayıt yok.")
 
     # Sonuç ekranı
     if st.session_state.get("sonuclar") is not None:
@@ -586,10 +614,11 @@ elif secim == "2. KDV Analiz Robotu":
             okunamayanlar = df_sonuc[df_sonuc["Durum"] == "OKUNAMADI"]
 
             st.subheader("Analiz Sonuçları")
-            tab1, tab2, tab3 = st.tabs([
+            tab1, tab2, tab3, tab4 = st.tabs([
                 f"🚨 RİSKLİ ({len(riskliler)})",
                 f"✅ UYUMLU ({len(temizler)})",
-                f"❓ OKUNAMAYAN ({len(okunamayanlar)})"
+                f"❓ OKUNAMAYAN ({len(okunamayanlar)})",
+                "📊 AYLIK ARŞİV RAPOR"
             ])
 
             with tab1:
@@ -633,6 +662,65 @@ elif secim == "2. KDV Analiz Robotu":
             with tab3:
                 st.dataframe(okunamayanlar, use_container_width=True)
 
+            with tab4:
+                st.info("Bu bölüm, ay ay biriken *RISKLI + OKUNAMADI* kayıtlarının dönem sonu raporudur.")
+                arsiv_df = arsiv_oku()
+
+                if arsiv_df.empty:
+                    st.warning("Henüz arşivde kayıt yok.")
+                else:
+                    st.subheader("Arşiv (Ham Kayıtlar)")
+                    st.dataframe(arsiv_df, use_container_width=True)
+
+                    st.subheader("Dönem Bazlı Özet")
+                    # Dönem bazlı sayım + toplam fark
+                    # (Fark string olabilir; güvenli çevrim)
+                    def safe_float(x):
+                        try:
+                            return float(str(x).replace(".", "").replace(",", "."))
+                        except Exception:
+                            return 0.0
+
+                    temp = arsiv_df.copy()
+                    temp["FarkNum"] = temp["Fark"].apply(safe_float)
+
+                    ozet = (
+                        temp.groupby(["Dönem", "Durum"], dropna=False)
+                        .agg(Adet=("VKN", "count"), ToplamFark=("FarkNum", "sum"))
+                        .reset_index()
+                    )
+                    st.dataframe(ozet, use_container_width=True)
+
+                    st.subheader("Dönem Sonu Genel Rapor (Durumlara göre)")
+                    genel = (
+                        temp.groupby(["Dönem"], dropna=False)
+                        .agg(
+                            RiskliAdet=("Durum", lambda s: (s == "RISKLI").sum()),
+                            OkunamadiAdet=("Durum", lambda s: (s == "OKUNAMADI").sum()),
+                            ToplamFark=("FarkNum", "sum"),
+                        )
+                        .reset_index()
+                    )
+                    st.dataframe(genel, use_container_width=True)
+
+                    # İndirilebilir Excel
+                    try:
+                        rapor_path = "donem_sonu_rapor.xlsx"
+                        with pd.ExcelWriter(rapor_path, engine="openpyxl") as writer:
+                            arsiv_df.to_excel(writer, index=False, sheet_name="ArsivHam")
+                            ozet.to_excel(writer, index=False, sheet_name="DonemDurumOzet")
+                            genel.to_excel(writer, index=False, sheet_name="DonemGenel")
+                        with open(rapor_path, "rb") as f:
+                            st.download_button(
+                                "⬇️ Dönem Sonu Raporu (Excel) İndir",
+                                data=f,
+                                file_name="donem_sonu_rapor.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True
+                            )
+                    except Exception as e:
+                        st.error(f"Rapor dosyası hazırlanamadı: {e}")
+
 # ==========================================
 # 8) 3. MENÜ: PROFESYONEL MESAJ
 # ==========================================
@@ -665,5 +753,7 @@ elif secim == "4. Tasdik Robotu":
         st.dataframe(st.session_state["mukellef_db"], use_container_width=True)
         if os.path.exists(KALICI_EXCEL_YOLU):
             st.caption("Not: Liste kalıcı kayıt dosyasından otomatik yüklenmektedir.")
+        if os.path.exists(ARSIV_DOSYASI):
+            st.caption("Not: Riskli/okunamayan kayıtlar dönem bazlı arşive yazılmaktadır.")
     else:
         st.warning("Görüntülenecek bir liste yok. '1. Excel Listesi Yükle' menüsünden bir kez yükleyin.")
