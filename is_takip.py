@@ -422,7 +422,7 @@ elif secim == "2. KDV Analiz Robotu":
             if not mukellef_list:
                 st.error("Mükellef listesi boş.")
                 st.stop()
-                
+
             mukellef = st.selectbox("Mükellef", mukellef_list, key="is_mukellef")
             rec = dfm[dfm["A_UNVAN"].astype(str) == str(mukellef)].iloc[0].to_dict()
             vkn = str(rec.get("C_VKN","")).strip() or str(rec.get("B_TC","")).strip()
@@ -540,7 +540,7 @@ elif secim == "2. KDV Analiz Robotu":
             st.markdown("</div>", unsafe_allow_html=True)
 
         # ----------------------------
-        # RENKLİ LİSTE (HTML KIRILMAZ)
+        # RENKLİ LİSTE (HTML KIRILMAZ - DÜZELTİLDİ)
         # ----------------------------
         st.markdown('<div class="card"><h3>📌 Yapılacak İşler</h3><div class="hint">Duruma göre renkli görünüm. Metinler HTML güvenli basılır.</div>', unsafe_allow_html=True)
 
@@ -623,28 +623,27 @@ elif secim == "2. KDV Analiz Robotu":
                 oncx = safe_html_text(oncelik or "-")
                 sontx = safe_html_text(son_t or "-")
 
-                html = f"""
-                <div class="{status_class(durum)}">
-                  <div class="strip"></div>
-                  <div class="wrap">
-                    <div class="top">
-                      <div>
-                        <div class="title">{muk} — {konu}</div>
-                        <div class="sub">VKN: {vknx} · Dönem: {donemx} · Kayıt: {isidx}</div>
-                      </div>
-                      <div><span class="badge badge-blue">{durumx}</span></div>
-                    </div>
-                    <div class="meta">
-                      <span class="pill"><strong>Öncelik:</strong> {oncx}</span>
-                      <span class="pill"><strong>Son Tarih:</strong> {sontx}</span>
-                      <span class="pill"><strong>Sorumlu:</strong> {sor}</span>
-                      {gecik_pill}
-                    </div>
-                    <div class="sub" style="margin-top:8px;"><strong>Açıklama:</strong> {ack}</div>
-                    <div class="sub"><strong>Not:</strong> {notx}</div>
-                  </div>
-                </div>
-                """
+                # !!! HTML BOŞLUKLARI SİLİNDİ - ARTIK GRİ KOD OLARAK GÖRÜNMEZ !!!
+                html = f"""<div class="{status_class(durum)}">
+<div class="strip"></div>
+<div class="wrap">
+<div class="top">
+<div>
+<div class="title">{muk} — {konu}</div>
+<div class="sub">VKN: {vknx} · Dönem: {donemx} · Kayıt: {isidx}</div>
+</div>
+<div><span class="badge badge-blue">{durumx}</span></div>
+</div>
+<div class="meta">
+<span class="pill"><strong>Öncelik:</strong> {oncx}</span>
+<span class="pill"><strong>Son Tarih:</strong> {sontx}</span>
+<span class="pill"><strong>Sorumlu:</strong> {sor}</span>
+{gecik_pill}
+</div>
+<div class="sub" style="margin-top:8px;"><strong>Açıklama:</strong> {ack}</div>
+<div class="sub"><strong>Not:</strong> {notx}</div>
+</div>
+</div>"""
                 st.markdown(html, unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
