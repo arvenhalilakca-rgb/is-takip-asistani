@@ -148,46 +148,38 @@ def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def safe_html_text(x) -> str:
-    """Kullanıcı metnini HTML güvenli bas."""
     s = escape(str(x or ""))
     return s.replace("\n", "<br>")
 
 def normalize_phone(phone: str) -> str:
     p = re.sub(r"\D", "", str(phone or ""))
-    if len(p) == 10:
-        p = "90" + p
-    if len(p) == 11 and p.startswith("0"):
-        p = "9" + p
+    if len(p) == 10: p = "90" + p
+    if len(p) == 11 and p.startswith("0"): p = "9" + p
     return p if len(p) >= 11 else ""
 
 def parse_phones(cell_text: str) -> list:
     t = str(cell_text or "")
-    if not t.strip():
-        return []
+    if not t.strip(): return []
     candidates = re.findall(r"(?:\+?90\s*)?(?:0\s*)?5\d{2}\s*\d{3}\s*\d{2}\s*\d{2}", t)
     out = []
     for c in candidates:
         n = normalize_phone(c)
-        if n and n not in out:
-            out.append(n)
+        if n and n not in out: out.append(n)
     if not out:
         digits = re.findall(r"\d+", t)
         joined = "".join(digits)
         candidates2 = re.findall(r"(?:90)?5\d{9}", joined)
         for c in candidates2:
             n = normalize_phone(c)
-            if n and n not in out:
-                out.append(n)
+            if n and n not in out: out.append(n)
     return out
 
 def whatsapp_gonder(numara: str, mesaj: str) -> bool:
     if not numara or ID_INSTANCE == "YOUR_INSTANCE_ID":
-        # API bilgisi yoksa sadece log bas, hata döndürme ki uygulama çökmesin
         st.warning(f"WhatsApp API Ayarlı Değil. Mesaj (Simülasyon): {mesaj[:20]}...")
         return False
     numara = normalize_phone(numara)
-    if not numara:
-        return False
+    if not numara: return False
     target = f"{SABIT_IHBAR_NO}@c.us" if numara == "SABIT" else f"{numara}@c.us"
     url = f"https://api.green-api.com/waInstance{ID_INSTANCE}/sendMessage/{API_TOKEN}"
     try:
@@ -200,8 +192,7 @@ def whatsapp_gonder(numara: str, mesaj: str) -> bool:
 def whatsapp_gonder_coklu(numaralar: list, mesaj: str) -> int:
     ok = 0
     for n in (numaralar or []):
-        if whatsapp_gonder(n, mesaj):
-            ok += 1
+        if whatsapp_gonder(n, mesaj): ok += 1
         time.sleep(0.25)
     return ok
 
@@ -209,33 +200,27 @@ def yeni_is_id() -> str:
     return "IS-" + datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6].upper()
 
 # =========================================================
-# 3) KALICI OKU/YAZ (SİLİNMEZLİK + YEDEK)
+# 3) KALICI OKU/YAZ
 # =========================================================
 def safe_backup(src: str, dst: str):
     try:
-        if os.path.exists(src):
-            shutil.copy2(src, dst)
-    except Exception:
-        pass
+        if os.path.exists(src): shutil.copy2(src, dst)
+    except Exception: pass
 
 def load_excel_safe(path, cols=None) -> pd.DataFrame:
-    if not os.path.exists(path):
-        return pd.DataFrame(columns=cols or []).fillna("")
+    if not os.path.exists(path): return pd.DataFrame(columns=cols or []).fillna("")
     try:
         df = pd.read_excel(path, dtype=str).fillna("")
         if cols:
             for c in cols:
-                if c not in df.columns:
-                    df[c] = ""
+                if c not in df.columns: df[c] = ""
             df = df[cols]
         return df.fillna("")
-    except Exception:
-        return pd.DataFrame(columns=cols or []).fillna("")
+    except Exception: return pd.DataFrame(columns=cols or []).fillna("")
 
 def save_excel_safe(df: pd.DataFrame, path: str, backup_path: str = None):
     df = df.fillna("")
-    if backup_path:
-        safe_backup(path, backup_path)
+    if backup_path: safe_backup(path, backup_path)
     df.to_excel(path, index=False)
 
 def load_mukellef() -> pd.DataFrame:
@@ -271,55 +256,33 @@ def load_yapilacak_isler() -> pd.DataFrame:
 
 def append_yapilacak_is(row: dict):
     df = load_yapilacak_isler()
-    if not df.empty and (df["IsID"].astype(str) == str(row.get("IsID",""))).any():
-        return
+    if not df.empty and (df["IsID"].astype(str) == str(row.get("IsID",""))).any(): return
     df2 = pd.concat([df, pd.DataFrame([row], columns=YAPILACAK_IS_COLS)], ignore_index=True)
     save_excel_safe(df2, YAPILACAK_IS_DOSYASI, backup_path=YAPILACAK_IS_BACKUP)
 
 def update_yapilacak_is(isid: str, updates: dict):
     df = load_yapilacak_isler()
-    if df.empty:
-        return
+    if df.empty: return
     m = df["IsID"].astype(str) == str(isid)
-    if not m.any():
-        return
+    if not m.any(): return
     idx = df[m].index[0]
     for k, v in (updates or {}).items():
-        if k in df.columns:
-            df.loc[idx, k] = v
+        if k in df.columns: df.loc[idx, k] = v
     save_excel_safe(df, YAPILACAK_IS_DOSYASI, backup_path=YAPILACAK_IS_BACKUP)
 
 # =========================================================
 # 4) MESAJ ŞABLONLARI
 # =========================================================
 def msg_yapilacak_is_personel(r: dict) -> str:
-    return (
-        "✅ *YAPILACAK İŞ ATAMASI*\n"
-        f"🆔 *Kayıt No:* {r.get('IsID','')}\n"
-        f"📅 *Son Tarih:* {r.get('SonTarih','')}\n"
-        "━━━━━━━━━━━━━━━━\n"
-        f"🏢 *Mükellef:* {r.get('Mükellef','')}\n"
-        f"🆔 *VKN/TCKN:* {r.get('VKN','')}\n"
-        f"⭐ *Öncelik:* {r.get('Öncelik','')}\n"
-        "━━━━━━━━━━━━━━━━\n"
-        f"📝 *Konu:* {r.get('Konu','')}\n"
-        f"🧾 *Açıklama:* {r.get('Açıklama','')}\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "Tamamlanınca not ekleyiniz."
-    )
+    return (f"✅ *YAPILACAK İŞ ATAMASI*\n🆔 {r.get('IsID','')}\n📅 {r.get('SonTarih','')}\n"
+            f"━━━━━━━━━━━━━━━━\n🏢 {r.get('Mükellef','')}\n📝 {r.get('Konu','')}\n🧾 {r.get('Açıklama','')}")
 
 def msg_yapilacak_is_mukellef(r: dict) -> str:
-    return (
-        "Merhaba,\n"
-        "Tarafınızla ilgili bir işlem/talep bulunmaktadır.\n"
-        f"📌 Konu: {r.get('Konu','')}\n"
-        f"📝 Açıklama: {r.get('Açıklama','')}\n"
-        f"📅 Son Tarih: {r.get('SonTarih','')}\n"
-        "Geri dönüşünüz rica olunur."
-    )
+    return (f"Merhaba,\nTarafınızla ilgili bir işlem/talep bulunmaktadır.\n📌 Konu: {r.get('Konu','')}\n"
+            f"📝 Açıklama: {r.get('Açıklama','')}\n📅 Son Tarih: {r.get('SonTarih','')}")
 
 # =========================================================
-# 5) SOL MENÜ (ANA YAPI BOZULMAZ)
+# 5) MENÜ VE SAYFA
 # =========================================================
 if "mukellef_db" not in st.session_state or st.session_state["mukellef_db"] is None:
     st.session_state["mukellef_db"] = load_mukellef()
@@ -327,36 +290,26 @@ if "mukellef_db" not in st.session_state or st.session_state["mukellef_db"] is N
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=64)
     st.header("HALİL AKÇA")
-    secim = st.radio(
-        "MENÜ",
-        ["1. Excel Listesi Yükle", "2. KDV Analiz Robotu", "3. Profesyonel Mesaj", "4. Tasdik Robotu"],
-        index=1
-    )
+    secim = st.radio("MENÜ", ["1. Excel Listesi Yükle", "2. KDV Analiz Robotu", "3. Profesyonel Mesaj", "4. Tasdik Robotu"], index=1)
     st.caption("Takip ve Yönetim Paneli")
 
 # =========================================================
-# 6) 1. EXCEL LİSTESİ YÜKLE
+# MODÜLLER
 # =========================================================
 if secim == "1. Excel Listesi Yükle":
-    st.markdown("""
-    <div class="ha-topbar">
-      <p class="ha-title">Halil Akça Takip Sistemi</p>
-      <p class="ha-sub">Mükellef veritabanı yükleme ve kalıcı kayıt</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("""<div class="ha-topbar"><p class="ha-title">Halil Akça Takip Sistemi</p>
+    <p class="ha-sub">Mükellef veritabanı yükleme ve kalıcı kayıt</p></div>""", unsafe_allow_html=True)
 
-    st.markdown('<div class="card"><h3>📂 Mükellef Veritabanı</h3><div class="hint">Telefon hücresinde birden fazla numara varsa sistem hepsini D_TEL_ALL alanında saklar.</div>', unsafe_allow_html=True)
-
+    st.markdown('<div class="card"><h3>📂 Mükellef Veritabanı</h3>', unsafe_allow_html=True)
     up = st.file_uploader("Excel seçin", type=["xlsx", "xls"])
     if up:
         try:
             raw = pd.read_excel(up, dtype=str).fillna("")
             cols = {c.strip().lower(): c for c in raw.columns}
-
             unvan_col = cols.get("unvan", raw.columns[0])
-            tckn_col  = cols.get("tckn",  raw.columns[1] if len(raw.columns) > 1 else raw.columns[0])
-            vkn_col   = cols.get("vkn",   raw.columns[2] if len(raw.columns) > 2 else raw.columns[0])
-            tel_col   = cols.get("telefon", raw.columns[3] if len(raw.columns) > 3 else raw.columns[0])
+            tckn_col  = cols.get("tckn",  raw.columns[1] if len(raw.columns)>1 else raw.columns[0])
+            vkn_col   = cols.get("vkn",   raw.columns[2] if len(raw.columns)>2 else raw.columns[0])
+            tel_col   = cols.get("telefon", raw.columns[3] if len(raw.columns)>3 else raw.columns[0])
 
             df = pd.DataFrame()
             df["A_UNVAN"] = raw[unvan_col].astype(str).str.strip()
@@ -365,27 +318,16 @@ if secim == "1. Excel Listesi Yükle":
             df["D_TEL_ALL"] = raw[tel_col].apply(lambda x: " | ".join(parse_phones(x)))
             df["D_TEL"] = df["D_TEL_ALL"].apply(lambda x: (parse_phones(x)[0] if parse_phones(x) else ""))
 
-            df = df.fillna("")
-            st.session_state["mukellef_db"] = df
+            st.session_state["mukellef_db"] = df.fillna("")
             save_excel_safe(df, KALICI_EXCEL_YOLU)
-
             st.success(f"✅ Kaydedildi. Toplam kayıt: {len(df)}")
-            st.dataframe(df[["A_UNVAN","B_TC","C_VKN","D_TEL_ALL"]].head(40), use_container_width=True)
-        except Exception as e:
-            st.error(f"Okuma hatası: {e}")
-
+            st.dataframe(df.head(40), use_container_width=True)
+        except Exception as e: st.error(f"Hata: {e}")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# =========================================================
-# 7) 2. KDV ANALİZ ROBOTU (MODÜLLER AYRILDI)
-# =========================================================
 elif secim == "2. KDV Analiz Robotu":
-    st.markdown("""
-    <div class="ha-topbar">
-      <p class="ha-title">Halil Akça Takip Sistemi</p>
-      <p class="ha-sub">Modüller ayrıldı: Yapılacak İş Takip Paneli · KDV Analiz Modülü</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("""<div class="ha-topbar"><p class="ha-title">Halil Akça Takip Sistemi</p>
+    <p class="ha-sub">İş Takip Paneli · Yönetim Dashboard</p></div>""", unsafe_allow_html=True)
 
     dfm = st.session_state["mukellef_db"]
     if dfm is None or dfm.empty:
@@ -394,127 +336,131 @@ elif secim == "2. KDV Analiz Robotu":
 
     tab_is, tab_kdv = st.tabs(["📌 Yapılacak İş Takip Paneli", "🧾 KDV Analiz Modülü"])
 
-    # ----------------------------
-    # TAB 1: İŞ TAKİP PANELİ
-    # ----------------------------
     with tab_is:
         dfp = load_personel()
         dfy = load_yapilacak_isler()
 
-        open_count = (dfy["Durum"].astype(str) == "AÇIK").sum()
-        inq_count  = (dfy["Durum"].astype(str) == "İNCELEMEDE").sum()
-        clo_count  = (dfy["Durum"].astype(str) == "KAPANDI").sum()
-
+        # KPI & DASHBOARD
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown('<div class="kpis">', unsafe_allow_html=True)
-        st.markdown(f'<div class="kpi"><div class="v">{len(dfy)}</div><div class="l">Toplam</div></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="kpi"><div class="v">{open_count}</div><div class="l">Açık</div></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="kpi"><div class="v">{inq_count}</div><div class="l">İncelemede</div></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="kpi"><div class="v">{clo_count}</div><div class="l">Kapandı</div></div>', unsafe_allow_html=True)
-        st.markdown('</div><div class="small">🔒 Silme yok. Tüm kayıtlar kalıcıdır.</div></div>', unsafe_allow_html=True)
+        kp1, kp2, kp3, kp4 = st.columns(4)
+        kp1.markdown(f'<div class="kpi"><div class="v">{len(dfy)}</div><div class="l">Toplam İş</div></div>', unsafe_allow_html=True)
+        kp2.markdown(f'<div class="kpi"><div class="v">{(dfy["Durum"]=="AÇIK").sum()}</div><div class="l">Açık</div></div>', unsafe_allow_html=True)
+        kp3.markdown(f'<div class="kpi"><div class="v">{(dfy["Durum"]=="İNCELEMEDE").sum()}</div><div class="l">İncelemede</div></div>', unsafe_allow_html=True)
+        kp4.markdown(f'<div class="kpi"><div class="v">{(dfy["Durum"]=="KAPANDI").sum()}</div><div class="l">Kapandı</div></div>', unsafe_allow_html=True)
+        
+        # GRAFİKSEL ANALİZ
+        st.markdown("<br><h5>📊 Durum Analizi</h5>", unsafe_allow_html=True)
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            durum_counts = dfy["Durum"].value_counts().reset_index()
+            durum_counts.columns = ["Durum", "Adet"]
+            st.bar_chart(durum_counts, x="Durum", y="Adet", color="Durum") 
+        with col_g2:
+            if not dfy.empty:
+                aktif_isler = dfy[dfy["Durum"].isin(["AÇIK", "İNCELEMEDE"])]
+                if not aktif_isler.empty:
+                    yuk_counts = aktif_isler["Sorumlu"].value_counts().reset_index()
+                    yuk_counts.columns = ["Personel", "Aktif İş Sayısı"]
+                    st.dataframe(yuk_counts, use_container_width=True, hide_index=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
+        # --- YENİ MODÜL: TOPLU İŞ OLUŞTURUCU ---
+        with st.expander("🔄 Toplu / Dönemsel İş Oluşturucu (Çoklu Seçim)", expanded=False):
+            st.info("Buradan seçeceğiniz birden fazla mükellefe aynı anda iş atayabilirsiniz.")
+            t_col1, t_col2, t_col3 = st.columns(3)
+            with t_col1: toplu_konu = st.text_input("İş Konusu", value="2025/Ocak KDV Tahakkuku", key="t_konu")
+            with t_col2: toplu_donem = st.text_input("Dönem", value=datetime.now().strftime("%B %Y"), key="t_donem")
+            with t_col3: toplu_son = st.date_input("Son Tarih", key="t_son")
+            toplu_aciklama = st.text_area("Açıklama", "Dönemsel beyanname ve tahakkuk işlemleri.", height=68, key="t_ack")
+            
+            tum_liste = dfm["A_UNVAN"].astype(str).tolist()
+            tumunu_sec = st.checkbox("Tüm Listeyi Getir", key="chk_all")
+            default_secim = tum_liste if tumunu_sec else []
+            
+            secilen_mukellefler = st.multiselect("Mükellefleri Seçiniz (İstediklerinizi ekleyip çıkarabilirsiniz)", options=tum_liste, default=default_secim, key="multi_select_muk")
+            
+            st.markdown(f"**Seçili Mükellef Sayısı:** {len(secilen_mukellefler)}")
+            
+            if st.button("🚀 Seçili Kişilere İşleri Oluştur", type="primary", use_container_width=True):
+                if not secilen_mukellefler or not toplu_konu:
+                    st.error("Mükellef veya konu seçilmedi.")
+                else:
+                    count = 0
+                    bar = st.progress(0)
+                    total = len(secilen_mukellefler)
+                    for i, m_isim in enumerate(secilen_mukellefler):
+                        m_rec = dfm[dfm["A_UNVAN"].astype(str) == str(m_isim)].iloc[0]
+                        row_new = {
+                            "IsID": yeni_is_id(),
+                            "Tip": "OTOMATİK", "Durum": "AÇIK", "Öncelik": "Orta",
+                            "Dönem": str(toplu_donem), "Mükellef": str(m_isim),
+                            "VKN": str(m_rec.get("C_VKN","") or m_rec.get("B_TC","")),
+                            "Konu": str(toplu_konu), "Açıklama": str(toplu_aciklama),
+                            "SonTarih": str(toplu_son), "Sorumlu": "", "SorumluTel": "",
+                            "MükellefTelAll": str(m_rec.get("D_TEL_ALL","")), "Not": "",
+                            "OlusturmaZamani": now_str(), "GuncellemeZamani": now_str(), "KapanisZamani": ""
+                        }
+                        append_yapilacak_is(row_new)
+                        count += 1
+                        bar.progress((i + 1) / total)
+                        time.sleep(0.02)
+                    st.success(f"✅ {count} adet iş oluşturuldu.")
+                    time.sleep(1)
+                    st.rerun()
+
+        # TEKİL İŞ & NOTLAR
         col_left, col_right = st.columns([1.25, 1.0], gap="large")
-
         with col_left:
-            st.markdown('<div class="card"><h3>➕ Yapılacak İş Oluştur</h3><div class="hint">Bu kayıtlar kalıcıdır, silinmez.</div>', unsafe_allow_html=True)
-
+            st.markdown('<div class="card"><h3>➕ Tekil İş Oluştur</h3>', unsafe_allow_html=True)
             mukellef_list = dfm["A_UNVAN"].astype(str).tolist()
-            if not mukellef_list:
-                st.error("Mükellef listesi boş.")
-                st.stop()
-
             mukellef = st.selectbox("Mükellef", mukellef_list, key="is_mukellef")
             rec = dfm[dfm["A_UNVAN"].astype(str) == str(mukellef)].iloc[0].to_dict()
-            vkn = str(rec.get("C_VKN","")).strip() or str(rec.get("B_TC","")).strip()
+            vkn = str(rec.get("C_VKN","") or rec.get("B_TC","")).strip()
             tel_all = str(rec.get("D_TEL_ALL","")).strip()
-            tel_list = parse_phones(tel_all)
 
-            st.markdown(
-                f'<span class="badge badge-blue">VKN/TCKN: {safe_html_text(vkn) or "-"}</span> '
-                f'<span class="badge">Tel: {safe_html_text(tel_all) or "-"}</span>',
-                unsafe_allow_html=True
-            )
-
+            st.markdown(f'<span class="badge badge-blue">VKN: {safe_html_text(vkn)}</span> <span class="badge">Tel: {safe_html_text(tel_all)}</span>', unsafe_allow_html=True)
             st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
-            konu = st.text_input("Konu", placeholder="Örn: KDV evrak tamamlama", key="is_konu")
-            aciklama = st.text_area("Açıklama / Talimat", height=105, key="is_aciklama")
-            is_notu = st.text_area("Not (Bu kayıt)", height=80, key="is_notu")
-
+            konu = st.text_input("Konu", key="is_konu")
+            aciklama = st.text_area("Açıklama", height=105, key="is_aciklama")
             cA, cB, cC = st.columns([1.1, 1.0, 1.0])
-            with cA:
-                donem = st.text_input("Dönem", placeholder="Örn: Ocak / 2024", key="is_donem")
-            with cB:
-                oncelik = st.selectbox("Öncelik", ["Yüksek","Orta","Düşük"], index=1, key="is_onc")
-            with cC:
-                son_tarih = st.date_input("Son Tarih", value=date.today(), key="is_son")
-
+            with cA: donem = st.text_input("Dönem", key="is_donem")
+            with cB: oncelik = st.selectbox("Öncelik", ["Yüksek","Orta","Düşük"], index=1, key="is_onc")
+            with cC: son_tarih = st.date_input("Son Tarih", value=date.today(), key="is_son")
+            
             aktif = dfp[dfp["Aktif"].astype(str).str.lower().isin(["evet","yes","true","1"])].copy()
-            sorumlu_list = ["(Atama Yok)"] + aktif["Personel"].astype(str).tolist()
-            sorumlu = st.selectbox("Sorumlu Personel", sorumlu_list, key="is_sorumlu")
+            sorumlu = st.selectbox("Sorumlu", ["(Atama Yok)"] + aktif["Personel"].astype(str).tolist(), key="is_sorumlu")
 
-            st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
-            st.markdown("**WhatsApp Bildirimi**")
             wa_p = st.checkbox("Personeli bilgilendir", value=True, key="wa_p")
-            wa_m = st.checkbox("Mükellefi bilgilendir", value=False, key="wa_m")
-            wa_m_all = st.checkbox("Mükellefe TÜM numara", value=True, key="wa_m_all")
 
             if st.button("✅ KAYDET", type="primary", use_container_width=True, key="is_kaydet"):
-                if not str(konu).strip():
-                    st.error("Konu boş olamaz.")
-                elif not str(aciklama).strip():
-                    st.error("Açıklama boş olamaz.")
+                if not konu or not aciklama: st.error("Konu/Açıklama eksik.")
                 else:
                     sor_tel = ""
                     if sorumlu != "(Atama Yok)":
                         rr = aktif[aktif["Personel"].astype(str) == str(sorumlu)]
-                        if not rr.empty:
-                            sor_tel = normalize_phone(rr.iloc[0].get("Telefon",""))
-
+                        if not rr.empty: sor_tel = normalize_phone(rr.iloc[0].get("Telefon",""))
+                    
                     row = {
-                        "IsID": yeni_is_id(),
-                        "Tip": "MANUEL",
-                        "Durum": "AÇIK",
-                        "Öncelik": oncelik,
-                        "Dönem": str(donem).strip(),
-                        "Mükellef": str(mukellef).strip(),
-                        "VKN": str(vkn).strip(),
-                        "Konu": str(konu).strip(),
-                        "Açıklama": str(aciklama).strip(),
-                        "SonTarih": str(son_tarih),
+                        "IsID": yeni_is_id(), "Tip": "MANUEL", "Durum": "AÇIK", "Öncelik": oncelik,
+                        "Dönem": str(donem), "Mükellef": str(mukellef), "VKN": vkn,
+                        "Konu": str(konu), "Açıklama": str(aciklama), "SonTarih": str(son_tarih),
                         "Sorumlu": "" if sorumlu == "(Atama Yok)" else str(sorumlu),
-                        "SorumluTel": sor_tel,
-                        "MükellefTelAll": tel_all,
-                        "Not": str(is_notu).strip(),
-                        "OlusturmaZamani": now_str(),
-                        "GuncellemeZamani": now_str(),
-                        "KapanisZamani": ""
+                        "SorumluTel": sor_tel, "MükellefTelAll": tel_all, "Not": "",
+                        "OlusturmaZamani": now_str(), "GuncellemeZamani": now_str(), "KapanisZamani": ""
                     }
-
                     append_yapilacak_is(row)
-
-                    if wa_p and sor_tel:
-                        whatsapp_gonder(sor_tel, msg_yapilacak_is_personel(row))
-                    if wa_m and tel_list:
-                        if wa_m_all:
-                            whatsapp_gonder_coklu(tel_list, msg_yapilacak_is_mukellef(row))
-                        else:
-                            whatsapp_gonder(tel_list[0], msg_yapilacak_is_mukellef(row))
-
-                    st.success(f"Kaydedildi: {row['IsID']}")
+                    if wa_p and sor_tel: whatsapp_gonder(sor_tel, msg_yapilacak_is_personel(row))
+                    st.success("Kaydedildi.")
                     st.rerun()
-
             st.markdown("</div>", unsafe_allow_html=True)
 
         with col_right:
-            st.markdown('<div class="card"><h3>🗒️ Mükellef Notları</h3><div class="hint">Mükellef bazında kalıcıdır.</div>', unsafe_allow_html=True)
-
+            st.markdown('<div class="card"><h3>🗒️ Mükellef Notları</h3>', unsafe_allow_html=True)
             dfn = load_mukellef_not()
             old_note = ""
             hit = dfn[dfn["VKN"].astype(str) == str(vkn)]
-            if not hit.empty:
-                old_note = str(hit.iloc[0].get("Notlar",""))
-
+            if not hit.empty: old_note = str(hit.iloc[0].get("Notlar",""))
             muk_not = st.text_area("Genel Not", value=old_note, height=240, key="muk_not")
 
             if st.button("💾 NOTU KAYDET", use_container_width=True, key="not_kaydet"):
@@ -526,291 +472,128 @@ elif secim == "2. KDV Analiz Robotu":
                     dfn2.loc[idx, "Notlar"] = str(muk_not).strip()
                     dfn2.loc[idx, "GuncellemeZamani"] = now_str()
                 else:
-                    dfn2 = pd.concat([dfn2, pd.DataFrame([{
-                        "VKN": str(vkn),
-                        "Mükellef": str(mukellef),
-                        "Notlar": str(muk_not).strip(),
-                        "GuncellemeZamani": now_str()
-                    }])], ignore_index=True)
-
+                    dfn2 = pd.concat([dfn2, pd.DataFrame([{"VKN":str(vkn),"Mükellef":str(mukellef),"Notlar":str(muk_not).strip(),"GuncellemeZamani":now_str()}])], ignore_index=True)
                 save_excel_safe(dfn2, MUKELLEF_NOT_DOSYASI)
                 st.success("Not kaydedildi.")
                 st.rerun()
-
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # ----------------------------
-        # RENKLİ LİSTE (HTML KIRILMAZ - DÜZELTİLDİ)
-        # ----------------------------
-        st.markdown('<div class="card"><h3>📌 Yapılacak İşler</h3><div class="hint">Duruma göre renkli görünüm. Metinler HTML güvenli basılır.</div>', unsafe_allow_html=True)
-
-        dfy = load_yapilacak_isler()
-
+        # LİSTELEME
+        st.markdown('<div class="card"><h3>📌 Yapılacak İşler</h3>', unsafe_allow_html=True)
         f1, f2, f3, f4 = st.columns([1.2, 1.2, 1.2, 2.4])
-        with f1:
-            fdurum = st.selectbox("Durum", ["(Tümü)", "AÇIK", "İNCELEMEDE", "KAPANDI", "İPTAL"], key="f_durum")
-        with f2:
-            fonc = st.selectbox("Öncelik", ["(Tümü)","Yüksek","Orta","Düşük"], key="f_onc")
-        with f3:
-            fson = st.selectbox("Tarih", ["(Hepsi)", "Gecikenler"], key="f_son")
-        with f4:
-            fara = st.text_input("Ara (Mükellef / Konu)", placeholder="örn: tekstil / kdv / evrak", key="f_ara")
+        with f1: fdurum = st.selectbox("Durum", ["(Tümü)", "AÇIK", "İNCELEMEDE", "KAPANDI", "İPTAL"], key="f_durum")
+        with f2: fonc = st.selectbox("Öncelik", ["(Tümü)","Yüksek","Orta","Düşük"], key="f_onc")
+        with f3: fson = st.selectbox("Tarih", ["(Hepsi)", "Gecikenler"], key="f_son")
+        with f4: fara = st.text_input("Ara", placeholder="Mükellef / Konu", key="f_ara")
 
         view = dfy.copy()
-        if fdurum != "(Tümü)":
-            view = view[view["Durum"].astype(str) == fdurum]
-        if fonc != "(Tümü)":
-            view = view[view["Öncelik"].astype(str) == fonc]
+        if fdurum != "(Tümü)": view = view[view["Durum"].astype(str) == fdurum]
+        if fonc != "(Tümü)": view = view[view["Öncelik"].astype(str) == fonc]
         if str(fara).strip():
             q = str(fara).strip().lower()
-            view = view[
-                view["Mükellef"].astype(str).str.lower().str.contains(q, na=False) |
-                view["Konu"].astype(str).str.lower().str.contains(q, na=False) |
-                view["Açıklama"].astype(str).str.lower().str.contains(q, na=False)
-            ]
+            view = view[view["Mükellef"].astype(str).str.lower().str.contains(q, na=False) | view["Konu"].astype(str).str.lower().str.contains(q, na=False)]
 
         def to_dt(x):
-            try:
-                return pd.to_datetime(str(x), errors="coerce")
-            except Exception:
-                return pd.NaT
-
+            try: return pd.to_datetime(str(x), errors="coerce")
+            except: return pd.NaT
         view["_son"] = view["SonTarih"].apply(to_dt)
         today_dt = pd.to_datetime(date.today())
         view["_gecik"] = (view["_son"].notna()) & (view["_son"] < today_dt) & (view["Durum"].astype(str).isin(["AÇIK","İNCELEMEDE"]))
-        if fson == "Gecikenler":
-            view = view[view["_gecik"] == True]
+        if fson == "Gecikenler": view = view[view["_gecik"] == True]
         view = view.sort_values(by=["_gecik","_son"], ascending=[False, True])
 
         def status_class(s: str) -> str:
             s = (s or "").strip().upper()
-            if s == "KAPANDI":
-                return "task-row task-done"
-            if s == "İNCELEMEDE":
-                return "task-row task-prog"
-            if s == "İPTAL":
-                return "task-row task-cancel"
+            if s == "KAPANDI": return "task-row task-done"
+            if s == "İNCELEMEDE": return "task-row task-prog"
+            if s == "İPTAL": return "task-row task-cancel"
             return "task-row task-open"
 
-        if view.empty:
-            st.info("Kayıt bulunamadı.")
+        if view.empty: st.info("Kayıt bulunamadı.")
         else:
             for _, r in view.drop(columns=["_son","_gecik"], errors="ignore").iterrows():
-                durum = str(r.get("Durum","")).strip()
-                oncelik = str(r.get("Öncelik","")).strip()
-                son_t = str(r.get("SonTarih","")).strip()
-
-                gecik = False
-                try:
-                    dt = pd.to_datetime(son_t, errors="coerce")
-                    if pd.notna(dt):
-                        gecik = (dt.date() < date.today()) and (durum in ["AÇIK","İNCELEMEDE"])
-                except Exception:
-                    pass
-
-                gecik_pill = "<span class='pill'><strong>GECİKMİŞ</strong></span>" if gecik else ""
-
-                # HTML güvenli metinler
-                muk = safe_html_text(r.get("Mükellef",""))
-                konu = safe_html_text(r.get("Konu",""))
-                vknx = safe_html_text(r.get("VKN",""))
-                donemx = safe_html_text(r.get("Dönem","") or "-")
-                isidx = safe_html_text(r.get("IsID",""))
-                sor = safe_html_text(r.get("Sorumlu","") or "-")
-                ack = safe_html_text(r.get("Açıklama",""))
-                notx = safe_html_text(r.get("Not","") or "-")
-                durumx = safe_html_text(durum or "-")
-                oncx = safe_html_text(oncelik or "-")
-                sontx = safe_html_text(son_t or "-")
-
-                # !!! HTML BOŞLUKLARI SİLİNDİ - ARTIK GRİ KOD OLARAK GÖRÜNMEZ !!!
-                html = f"""<div class="{status_class(durum)}">
-<div class="strip"></div>
-<div class="wrap">
-<div class="top">
-<div>
-<div class="title">{muk} — {konu}</div>
-<div class="sub">VKN: {vknx} · Dönem: {donemx} · Kayıt: {isidx}</div>
-</div>
-<div><span class="badge badge-blue">{durumx}</span></div>
-</div>
-<div class="meta">
-<span class="pill"><strong>Öncelik:</strong> {oncx}</span>
-<span class="pill"><strong>Son Tarih:</strong> {sontx}</span>
-<span class="pill"><strong>Sorumlu:</strong> {sor}</span>
-{gecik_pill}
-</div>
-<div class="sub" style="margin-top:8px;"><strong>Açıklama:</strong> {ack}</div>
-<div class="sub"><strong>Not:</strong> {notx}</div>
-</div>
-</div>"""
+                durum, oncelik, son_t = str(r.get("Durum","")), str(r.get("Öncelik","")), str(r.get("SonTarih",""))
+                gecik_pill = "<span class='pill'><strong>GECİKMİŞ</strong></span>" if (pd.to_datetime(son_t,errors='coerce') < today_dt and durum in ["AÇIK","İNCELEMEDE"]) else ""
+                
+                # HTML Fix: Indentation removed for clean rendering
+                html = f"""<div class="{status_class(durum)}"><div class="strip"></div><div class="wrap"><div class="top">
+<div><div class="title">{safe_html_text(r.get("Mükellef",""))} — {safe_html_text(r.get("Konu",""))}</div>
+<div class="sub">VKN: {safe_html_text(r.get("VKN",""))} · Dönem: {safe_html_text(r.get("Dönem",""))} · ID: {r.get("IsID","")}</div></div>
+<div><span class="badge badge-blue">{safe_html_text(durum)}</span></div></div>
+<div class="meta"><span class="pill"><strong>Öncelik:</strong> {safe_html_text(oncelik)}</span>
+<span class="pill"><strong>Son Tarih:</strong> {safe_html_text(son_t)}</span>
+<span class="pill"><strong>Sorumlu:</strong> {safe_html_text(r.get("Sorumlu",""))}</span>{gecik_pill}</div>
+<div class="sub" style="margin-top:8px;"><strong>Açıklama:</strong> {safe_html_text(r.get("Açıklama",""))}</div>
+<div class="sub"><strong>Not:</strong> {safe_html_text(r.get("Not",""))}</div></div></div>"""
                 st.markdown(html, unsafe_allow_html=True)
-
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # ----------------------------
-        # SEÇİLİ KAYIT GÜNCELLEME
-        # ----------------------------
-        st.markdown('<div class="card"><h3>🛠️ Seçili Yapılacak İş</h3><div class="hint">Silme yoktur. Sadece güncelleme.</div>', unsafe_allow_html=True)
-
+        # GÜNCELLEME
+        st.markdown('<div class="card"><h3>🛠️ İş Güncelle</h3>', unsafe_allow_html=True)
         dfy_all = load_yapilacak_isler()
-        if dfy_all.empty:
-            st.info("Kayıt yok.")
-        else:
+        if not dfy_all.empty:
             sec_id = st.selectbox("Kayıt Seç (IsID)", dfy_all["IsID"].astype(str).tolist(), key="sec_is")
             row = dfy_all[dfy_all["IsID"].astype(str) == str(sec_id)].iloc[0].to_dict()
-
             a, b = st.columns([1.2, 1.0], gap="large")
             with a:
                 new_status = st.selectbox("Durum", ["AÇIK","İNCELEMEDE","KAPANDI","İPTAL"], index=0, key="upd_durum")
-                new_due = st.text_input("Son Tarih (YYYY-MM-DD)", value=str(row.get("SonTarih","")), key="upd_son")
-                new_note = st.text_area("Not (Bu kayıt)", value=str(row.get("Not","")), height=110, key="upd_not")
+                new_due = st.text_input("Son Tarih", value=str(row.get("SonTarih","")), key="upd_son")
+                new_note = st.text_area("Not", value=str(row.get("Not","")), height=110, key="upd_not")
             with b:
-                st.markdown("**Hatırlatma / Mesaj**")
-                target = st.selectbox("Gönder", ["Gönderme", "Sorumlu Personele", "Mükellefe", "Serbest Numara"], key="upd_target")
-                free = ""
-                all_m = False
-                if target == "Serbest Numara":
-                    free = st.text_input("Numara", placeholder="905xxxxxxxxx", key="upd_free")
-                if target == "Mükellefe":
-                    all_m = st.checkbox("Mükellefe TÜM numara", value=True, key="upd_allm")
+                target = st.selectbox("Mesaj Gönder", ["Gönderme", "Sorumlu Personele", "Mükellefe"], key="upd_target")
+                all_m = st.checkbox("Mükellefe TÜM numara", value=True, key="upd_allm")
 
             if st.button("💾 GÜNCELLE", type="primary", use_container_width=True, key="upd_btn"):
-                updates = {
-                    "Durum": new_status,
-                    "SonTarih": str(new_due).strip(),
-                    "Not": str(new_note).strip(),
-                    "GuncellemeZamani": now_str()
-                }
-                if new_status == "KAPANDI":
-                    updates["KapanisZamani"] = now_str()
-
+                updates = {"Durum": new_status, "SonTarih": str(new_due).strip(), "Not": str(new_note).strip(), "GuncellemeZamani": now_str()}
+                if new_status == "KAPANDI": updates["KapanisZamani"] = now_str()
                 update_yapilacak_is(sec_id, updates)
-
-                # Mesaj (opsiyonel)
-                cur_df = load_yapilacak_isler()
-                cur = cur_df[cur_df["IsID"].astype(str) == str(sec_id)].iloc[0].to_dict()
-
-                if target != "Gönderme":
-                    if target == "Sorumlu Personele":
-                        tel = normalize_phone(cur.get("SorumluTel",""))
-                        if tel:
-                            whatsapp_gonder(tel, msg_yapilacak_is_personel(cur))
-                    elif target == "Mükellefe":
-                        tels = parse_phones(cur.get("MükellefTelAll",""))
-                        if tels:
-                            if all_m:
-                                whatsapp_gonder_coklu(tels, msg_yapilacak_is_mukellef(cur))
-                            else:
-                                whatsapp_gonder(tels[0], msg_yapilacak_is_mukellef(cur))
-                    else:
-                        tel = normalize_phone(free)
-                        if tel:
-                            whatsapp_gonder(tel, msg_yapilacak_is_personel(cur))
-
+                
+                cur = load_yapilacak_isler()[load_yapilacak_isler()["IsID"]==str(sec_id)].iloc[0].to_dict()
+                if target == "Sorumlu Personele":
+                    tel = normalize_phone(cur.get("SorumluTel",""))
+                    if tel: whatsapp_gonder(tel, msg_yapilacak_is_personel(cur))
+                elif target == "Mükellefe":
+                    tels = parse_phones(cur.get("MükellefTelAll",""))
+                    if tels:
+                        if all_m: whatsapp_gonder_coklu(tels, msg_yapilacak_is_mukellef(cur))
+                        else: whatsapp_gonder(tels[0], msg_yapilacak_is_mukellef(cur))
                 st.success("Güncellendi.")
                 st.rerun()
-
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ----------------------------
-    # TAB 2: KDV ANALİZ MODÜLÜ (Ayrı tutuldu)
-    # ----------------------------
     with tab_kdv:
-        st.markdown('<div class="card"><h3>🧾 KDV Analiz Modülü</h3><div class="hint">Bu bölüm ayrı tutulur. İş takip ekranını dağıtmaz.</div>', unsafe_allow_html=True)
-        st.info("KDV analiz ekranınızı bu sekmede ayrı ve temiz şekilde çalıştırıyoruz. Mevcut KDV analiz kodunuz varsa buraya entegre edilir.")
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.info("KDV Analiz Modülü buraya eklenecek.")
 
-# =========================================================
-# 8) 3. PROFESYONEL MESAJ
-# =========================================================
 elif secim == "3. Profesyonel Mesaj":
-    st.markdown("""
-    <div class="ha-topbar">
-      <p class="ha-title">Profesyonel Mesaj</p>
-      <p class="ha-sub">Mükellef seçip WhatsApp üzerinden mesaj gönderimi</p>
-    </div>
-    """, unsafe_allow_html=True)
-
+    st.markdown('<div class="ha-topbar"><p class="ha-title">Profesyonel Mesaj</p></div>', unsafe_allow_html=True)
     dfm = load_mukellef()
-    if dfm.empty:
-        st.warning("Önce mükellef listesini yükleyin.")
-        st.stop()
-
-    st.markdown('<div class="card"><h3>📤 Mesaj Gönder</h3><div class="hint">Tüm numaralara veya ilk numaraya gönderim yapabilirsiniz.</div>', unsafe_allow_html=True)
-
+    st.markdown('<div class="card"><h3>📤 Mesaj Gönder</h3>', unsafe_allow_html=True)
     kisi = st.selectbox("Mükellef", dfm["A_UNVAN"].astype(str).tolist(), key="pm_kisi")
-    rec = dfm[dfm["A_UNVAN"].astype(str) == str(kisi)].iloc[0].to_dict()
-    tels = parse_phones(rec.get("D_TEL_ALL",""))
-
-    st.markdown(f'<span class="badge badge-blue">Telefonlar: {safe_html_text(rec.get("D_TEL_ALL","") or "-")}</span>', unsafe_allow_html=True)
-    msg = st.text_area("Mesaj", key="pm_msg")
-    to_all = st.checkbox("Tüm numaralara gönder", value=True, key="pm_all")
-
-    if st.button("Gönder", type="primary", key="pm_send"):
-        if to_all:
-            sent = whatsapp_gonder_coklu(tels, msg)
-            st.success(f"Gönderildi: {sent} numara")
-        else:
-            if tels:
-                ok = whatsapp_gonder(tels[0], msg)
-                st.success("Gönderildi." if ok else "Gönderilemedi.")
-            else:
-                st.error("Telefon bulunamadı.")
-
+    if kisi:
+        rec = dfm[dfm["A_UNVAN"].astype(str) == str(kisi)].iloc[0].to_dict()
+        tels = parse_phones(rec.get("D_TEL_ALL",""))
+        st.write(f"Telefonlar: {tels}")
+        msg = st.text_area("Mesaj", key="pm_msg")
+        to_all = st.checkbox("Tüm numaralara", value=True, key="pm_all")
+        if st.button("Gönder", type="primary", key="pm_send"):
+            if to_all: st.success(f"{whatsapp_gonder_coklu(tels, msg)} gönderildi.")
+            else: st.success("Gönderildi." if whatsapp_gonder(tels[0], msg) else "Hata")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# =========================================================
-# 9) 4. TASDİK ROBOTU
-# =========================================================
 elif secim == "4. Tasdik Robotu":
-    st.markdown("""
-    <div class="ha-topbar">
-      <p class="ha-title">Kayıtlar</p>
-      <p class="ha-sub">Mükellef / Personel / Yapılacak İşler</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    t1, t2, t3 = st.tabs(["📋 Mükellefler", "👥 Personel", "🗂️ Yapılacak İşler (Ham)"])
-    with t1:
-        st.markdown('<div class="card"><h3>📋 Mükellef Listesi</h3></div>', unsafe_allow_html=True)
-        st.dataframe(load_mukellef(), use_container_width=True)
-
+    st.markdown('<div class="ha-topbar"><p class="ha-title">Kayıtlar</p></div>', unsafe_allow_html=True)
+    t1, t2, t3 = st.tabs(["📋 Mükellefler", "👥 Personel", "🗂️ Yapılacak İşler"])
+    with t1: st.dataframe(load_mukellef(), use_container_width=True)
     with t2:
-        st.markdown('<div class="card"><h3>👥 Personel</h3><div class="hint">Personel yönetimi burada tutulur.</div>', unsafe_allow_html=True)
         dfp = load_personel()
-
-        a, b, c = st.columns([2, 2, 1])
-        with a:
-            p_ad = st.text_input("Personel", key="p_ad")
-        with b:
-            p_tel = st.text_input("Telefon", key="p_tel")
-        with c:
-            p_aktif = st.selectbox("Aktif", ["Evet","Hayır"], index=0, key="p_aktif")
-
-        if st.button("➕ Kaydet", type="primary", use_container_width=True, key="p_kaydet"):
-            tel = normalize_phone(p_tel)
-            if not str(p_ad).strip():
-                st.error("Personel adı boş olamaz.")
-            elif not tel:
-                st.error("Telefon geçersiz.")
-            else:
-                m = dfp["Personel"].astype(str).str.strip().str.lower() == str(p_ad).strip().lower()
-                if m.any():
-                    idx = dfp[m].index[0]
-                    dfp.loc[idx, "Telefon"] = tel
-                    dfp.loc[idx, "Aktif"] = p_aktif
-                else:
-                    dfp = pd.concat([dfp, pd.DataFrame([{"Personel":p_ad.strip(), "Telefon":tel, "Aktif":p_aktif}])], ignore_index=True)
-
-                save_excel_safe(dfp, PERSONEL_DOSYASI, backup_path=None)
-                st.success("Kaydedildi.")
+        c1, c2, c3 = st.columns([2,2,1])
+        with c1: p_ad = st.text_input("Personel", key="p_ad")
+        with c2: p_tel = st.text_input("Telefon", key="p_tel")
+        with c3: p_aktif = st.selectbox("Aktif", ["Evet","Hayır"], key="p_aktif")
+        if st.button("➕ Kaydet", key="p_kaydet"):
+            if p_ad:
+                dfp = pd.concat([dfp, pd.DataFrame([{"Personel":p_ad,"Telefon":normalize_phone(p_tel),"Aktif":p_aktif}])], ignore_index=True)
+                save_excel_safe(dfp, PERSONEL_DOSYASI)
                 st.rerun()
-
         st.dataframe(dfp, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with t3:
-        st.markdown('<div class="card"><h3>🗂️ Yapılacak İşler (Ham)</h3><div class="hint">Silme yoktur. Kayıtlar kalıcıdır.</div>', unsafe_allow_html=True)
-        st.dataframe(load_yapilacak_isler(), use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    with t3: st.dataframe(load_yapilacak_isler(), use_container_width=True)
