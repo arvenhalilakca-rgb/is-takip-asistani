@@ -251,6 +251,7 @@ def pos_bul_istenen_satirdan(text: str) -> float:
                         if 0 < val <= MAX_TUTAR_SANITY:
                             return val
 
+                # yedek: bu bölgedeki satırlarda ilk para tutarı
                 for j in range(i, min(i + 20, len(lines))):
                     amt2 = re.search(AMOUNT_REGEX, lines[j])
                     if amt2:
@@ -263,81 +264,69 @@ def pos_bul_istenen_satirdan(text: str) -> float:
         return 0.0
 
 
-def donem_bul(block_text):
+def donem_bul(block_text: str):
     """
-    Dönemi, beyanname üst bilgisinden daha deterministik yakalar:
-    Örnek: "DÖNEM TİPİ Yıl 2024" ve "Aylık Ay Ocak"
+    PDF'teki gerçek yapıya göre dönem yakalama:
+    Genelde şu akış var:
+      DÖNEM TİPİ  Aylık  Yıl  Ay  2024  ... (VERGİ DAİRESİ/MALMÜDÜRLÜĞÜ)  Ocak
+    Bu yüzden 'Yıl Ay 2024 .... Ocak' desenini tek satıra indirip yakalıyoruz.
     """
     t = str(block_text or "")
     if not t.strip():
         return (None, None)
 
-    # Arama daha stabil olsun diye tek satıra indir
-    t1 = re.sub(r"\s+", " ", t)
+    # whitespace normalize
+    t1 = re.sub(r"\s+", " ", t).strip()
 
     ay_map = {
         "ocak": "Ocak",
-        "şubat": "Şubat",
-        "subat": "Şubat",
+        "şubat": "Şubat", "subat": "Şubat",
         "mart": "Mart",
         "nisan": "Nisan",
-        "mayıs": "Mayıs",
-        "mayis": "Mayıs",
+        "mayıs": "Mayıs", "mayis": "Mayıs",
         "haziran": "Haziran",
         "temmuz": "Temmuz",
-        "ağustos": "Ağustos",
-        "agustos": "Ağustos",
-        "eylül": "Eylül",
-        "eylul": "Eylül",
+        "ağustos": "Ağustos", "agustos": "Ağustos",
+        "eylül": "Eylül", "eylul": "Eylül",
         "ekim": "Ekim",
-        "kasım": "Kasım",
-        "kasim": "Kasım",
-        "aralık": "Aralık",
-        "aralik": "Aralık",
+        "kasım": "Kasım", "kasim": "Kasım",
+        "aralık": "Aralık", "aralik": "Aralık",
     }
+    ay_regex = r"(ocak|şubat|subat|mart|nisan|mayıs|mayis|haziran|temmuz|ağustos|agustos|eylül|eylul|ekim|kasım|kasim|aralık|aralik)"
 
+    # 1) En güçlü desen: "Yıl Ay 2024 ... Ocak"
+    m = re.search(rf"Yıl\s*Ay\s*(20\d{{2}}).{{0,120}}?\b{ay_regex}\b", t1, flags=re.IGNORECASE)
+    if m:
+        yil = m.group(1)
+        ay_raw = (m.group(2) or "").lower()
+        ay = ay_map.get(ay_raw)
+        return (ay, yil)
+
+    # 2) Alternatif desen: "Yıl 2024 ... Ay ... Ocak"
+    m2 = re.search(rf"Yıl\s*(20\d{{2}}).{{0,120}}?Ay.{{0,120}}?\b{ay_regex}\b", t1, flags=re.IGNORECASE)
+    if m2:
+        yil = m2.group(1)
+        ay_raw = (m2.group(2) or "").lower()
+        ay = ay_map.get(ay_raw)
+        return (ay, yil)
+
+    # 3) Yedek: Yıl ayrı, ay adı ayrı
     yil = None
     ay = None
-
-    # Yıl: özellikle "DÖNEM TİPİ ... Yıl 2024" veya "Yıl 2024"
-    m_yil = re.search(r"(?:DÖNEM\s*TİPİ\s*)?Yıl\s*(20\d{2})", t1, flags=re.IGNORECASE)
+    m_yil = re.search(r"\b(20\d{2})\b", t1)
     if m_yil:
         yil = m_yil.group(1)
-    else:
-        m_yil2 = re.search(r"\b(20\d{2})\b", t1)
-        if m_yil2:
-            yil = m_yil2.group(1)
 
-    # Ay: özellikle "Aylık Ay Ocak" veya "Ay Ocak"
-    m_ay = re.search(r"(?:Aylık\s*)?Ay\s*([A-Za-zÇĞİÖŞÜçğıöşü]+)", t1, flags=re.IGNORECASE)
+    m_ay = re.search(rf"\b{ay_regex}\b", t1, flags=re.IGNORECASE)
     if m_ay:
-        raw = m_ay.group(1).strip().lower()
-        raw = raw.replace("İ".lower(), "i")  # emniyet
-        ay = ay_map.get(raw, None)
-
-    # Yedek: metin içinde geçen ay adını ara
-    if not ay:
-        for k, v in ay_map.items():
-            if re.search(rf"\b{re.escape(k)}\b", t1, flags=re.IGNORECASE):
-                ay = v
-                break
+        ay = ay_map.get(m_ay.group(1).lower())
 
     return (ay, yil)
 
 
-def risk_mesaji_olustur(row) -> str:
+def risk_mesaji_olustur(row: dict) -> str:
     """WhatsApp için göze çarpan risk mesajı üretir (Ay/Yıl dahil)."""
-    block_text = str(row.get("BlokMetin", "") or "")
-    ay, yil = donem_bul(block_text)
-
-    if ay and yil:
-        donem_str = f"{ay} / {yil}"
-    elif yil and not ay:
-        donem_str = f"{yil}"
-    elif ay and not yil:
-        donem_str = f"{ay}"
-    else:
-        donem_str = "Bilinmiyor"
+    donem_str = row.get("Dönem", "") or "Bilinmiyor"
 
     pos = float(row.get("POS", 0.0) or 0.0)
     beyan = float(row.get("Beyan", 0.0) or 0.0)
@@ -509,10 +498,17 @@ elif secim == "2. KDV Analiz Robotu":
                 progress.progress(min(pct, 100))
                 pro_text.info(f"İlerleme: {done}/{total_blocks} (%{pct}) | {pdf_name} - Blok {idx}/{len(blocks)}")
 
-                # Dönem (loglarda da gösterelim)
+                # Dönem
                 ay, yil = donem_bul(block)
-                donem_log = f"{ay or '?'} / {yil or '?'}"
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Dönem tespiti: {donem_log}", color="#8ab4f8")
+                donem_str = "Bilinmiyor"
+                if ay and yil:
+                    donem_str = f"{ay} / {yil}"
+                elif yil and not ay:
+                    donem_str = f"{yil}"
+                elif ay and not yil:
+                    donem_str = f"{ay}"
+
+                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Dönem: {donem_str}", color="#8ab4f8")
 
                 # VKN
                 log_yaz(logs, terminal, f"[{pdf_name} | {idx}] VKN/TCKN aranıyor...", color="#d7d7d7")
@@ -562,6 +558,7 @@ elif secim == "2. KDV Analiz Robotu":
                 )
 
                 sonuclar.append({
+                    "Dönem": donem_str,
                     "Mükellef": isim,
                     "VKN": vkn or "Bulunamadı",
                     "Matrah(Aylık)": matrah,
@@ -569,8 +566,7 @@ elif secim == "2. KDV Analiz Robotu":
                     "POS": pos,
                     "Beyan": beyan_toplami,
                     "Fark": fark,
-                    "Durum": durum,
-                    "BlokMetin": block  # WhatsApp mesajında Ay/Yıl yakalamak için
+                    "Durum": durum
                 })
 
                 time.sleep(0.01)
@@ -605,7 +601,7 @@ elif secim == "2. KDV Analiz Robotu":
                             st.markdown(f"""
                             <div class='card risk-card'>
                                 <div class='card-title'>{row['Mükellef']}</div>
-                                <div class='card-sub'>VKN/TCKN: {row['VKN']}</div>
+                                <div class='card-sub'>Dönem: {row['Dönem']} | VKN/TCKN: {row['VKN']}</div>
                                 <div style='display:flex; gap:15px; margin-top:10px'>
                                     <div>
                                         <span class='stat-lbl'>POS</span><br>
@@ -632,10 +628,10 @@ elif secim == "2. KDV Analiz Robotu":
                     st.success("Riskli bulunan mükellef yok.")
 
             with tab2:
-                st.dataframe(temizler.drop(columns=["BlokMetin"], errors="ignore"), use_container_width=True)
+                st.dataframe(temizler, use_container_width=True)
 
             with tab3:
-                st.dataframe(okunamayanlar.drop(columns=["BlokMetin"], errors="ignore"), use_container_width=True)
+                st.dataframe(okunamayanlar, use_container_width=True)
 
 # ==========================================
 # 8) 3. MENÜ: PROFESYONEL MESAJ
