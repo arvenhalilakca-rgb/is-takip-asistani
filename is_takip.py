@@ -19,8 +19,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-ID_INSTANCE = st.secrets.get("ID_INSTANCE", "YOUR_INSTANCE_ID")
-API_TOKEN   = st.secrets.get("API_TOKEN", "YOUR_API_TOKEN")
+# Secrets hatası almamak için güvenli erişim
+try:
+    ID_INSTANCE = st.secrets.get("ID_INSTANCE", "YOUR_INSTANCE_ID")
+    API_TOKEN   = st.secrets.get("API_TOKEN", "YOUR_API_TOKEN")
+except FileNotFoundError:
+    ID_INSTANCE = "YOUR_INSTANCE_ID"
+    API_TOKEN = "YOUR_API_TOKEN"
+
 SABIT_IHBAR_NO = "905351041616"
 
 # Kalıcı dosyalar
@@ -38,7 +44,7 @@ YAPILACAK_IS_COLS = [
 ]
 
 # =========================================================
-# 1) TEMA / CSS (Sakin + Profesyonel, Duruma göre renk)
+# 1) TEMA / CSS (Sakin + Profesyonel, LIGHT THEME)
 # =========================================================
 st.markdown("""
 <style>
@@ -175,8 +181,9 @@ def parse_phones(cell_text: str) -> list:
     return out
 
 def whatsapp_gonder(numara: str, mesaj: str) -> bool:
-    if not numara or not ID_INSTANCE or not API_TOKEN:
-        st.error("WhatsApp API bilgileri veya numara eksik.")
+    if not numara or ID_INSTANCE == "YOUR_INSTANCE_ID":
+        # API bilgisi yoksa sadece log bas, hata döndürme ki uygulama çökmesin
+        st.warning(f"WhatsApp API Ayarlı Değil. Mesaj (Simülasyon): {mesaj[:20]}...")
         return False
     numara = normalize_phone(numara)
     if not numara:
@@ -234,16 +241,16 @@ def save_excel_safe(df: pd.DataFrame, path: str, backup_path: str = None):
 def load_mukellef() -> pd.DataFrame:
     cols = ["A_UNVAN","B_TC","C_VKN","D_TEL","D_TEL_ALL"]
     df = load_excel_safe(KALICI_EXCEL_YOLU, cols=cols)
-    if (df["D_TEL_ALL"].astype(str).str.strip() == "").all():
+    if not df.empty and (df["D_TEL_ALL"].astype(str).str.strip() == "").all():
         df["D_TEL_ALL"] = df["D_TEL"].apply(lambda x: " | ".join(parse_phones(x)))
-    if (df["D_TEL"].astype(str).str.strip() == "").all():
+    if not df.empty and (df["D_TEL"].astype(str).str.strip() == "").all():
         df["D_TEL"] = df["D_TEL_ALL"].apply(lambda x: (parse_phones(x)[0] if parse_phones(x) else ""))
     return df.fillna("")
 
 def load_personel() -> pd.DataFrame:
     cols = ["Personel","Telefon","Aktif"]
     df = load_excel_safe(PERSONEL_DOSYASI, cols=cols)
-    if (df["Aktif"].astype(str).str.strip() == "").all():
+    if not df.empty and (df["Aktif"].astype(str).str.strip() == "").all():
         df["Aktif"] = "Evet"
     return df.fillna("")
 
@@ -411,7 +418,12 @@ elif secim == "2. KDV Analiz Robotu":
         with col_left:
             st.markdown('<div class="card"><h3>➕ Yapılacak İş Oluştur</h3><div class="hint">Bu kayıtlar kalıcıdır, silinmez.</div>', unsafe_allow_html=True)
 
-            mukellef = st.selectbox("Mükellef", dfm["A_UNVAN"].astype(str).tolist(), key="is_mukellef")
+            mukellef_list = dfm["A_UNVAN"].astype(str).tolist()
+            if not mukellef_list:
+                st.error("Mükellef listesi boş.")
+                st.stop()
+                
+            mukellef = st.selectbox("Mükellef", mukellef_list, key="is_mukellef")
             rec = dfm[dfm["A_UNVAN"].astype(str) == str(mukellef)].iloc[0].to_dict()
             vkn = str(rec.get("C_VKN","")).strip() or str(rec.get("B_TC","")).strip()
             tel_all = str(rec.get("D_TEL_ALL","")).strip()
@@ -438,7 +450,8 @@ elif secim == "2. KDV Analiz Robotu":
                 son_tarih = st.date_input("Son Tarih", value=date.today(), key="is_son")
 
             aktif = dfp[dfp["Aktif"].astype(str).str.lower().isin(["evet","yes","true","1"])].copy()
-            sorumlu = st.selectbox("Sorumlu Personel", ["(Atama Yok)"] + aktif["Personel"].astype(str).tolist(), key="is_sorumlu")
+            sorumlu_list = ["(Atama Yok)"] + aktif["Personel"].astype(str).tolist()
+            sorumlu = st.selectbox("Sorumlu Personel", sorumlu_list, key="is_sorumlu")
 
             st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
             st.markdown("**WhatsApp Bildirimi**")
