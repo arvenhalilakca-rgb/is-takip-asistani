@@ -89,11 +89,10 @@ def now_str():
 
 def normalize_phone(phone: str) -> str:
     p = re.sub(r"\D", "", str(phone or ""))
-    # kullanıcı 0 ile girerse 90 ekleyelim basitçe
-    if len(p) == 10:  # 5xx...
+    if len(p) == 10:
         p = "90" + p
     if len(p) == 11 and p.startswith("0"):
-        p = "9" + p  # 0xxxxxxxxxx -> 90xxxxxxxxxx
+        p = "9" + p
     return p
 
 def text_to_float(text) -> float:
@@ -176,6 +175,28 @@ def isim_eslestir_excel(numara):
         return res_tc.iloc[0]["A_UNVAN"]
 
     return f"Listede Yok ({num})"
+
+def mukellef_tel_bul(vkn: str = "", unvan: str = "") -> str:
+    """Mükellef excelinden telefon getirir (D_TEL)."""
+    df = st.session_state.get("mukellef_db")
+    if df is None or df.empty:
+        return ""
+    vkn = str(vkn or "").strip()
+    unvan = str(unvan or "").strip()
+
+    if vkn:
+        hit = df[df["C_VKN"].astype(str) == vkn]
+        if hit.empty:
+            hit = df[df["B_TC"].astype(str) == vkn]
+        if not hit.empty:
+            return normalize_phone(hit.iloc[0].get("D_TEL", ""))
+
+    if unvan:
+        hit2 = df[df["A_UNVAN"].astype(str).str.lower() == unvan.lower()]
+        if not hit2.empty:
+            return normalize_phone(hit2.iloc[0].get("D_TEL", ""))
+
+    return ""
 
 def pdf_to_full_text(pdf_file) -> str:
     full = []
@@ -438,7 +459,7 @@ def arsive_ekle(df_kayit: pd.DataFrame):
     combined = combined.drop(columns="__key", errors="ignore")
     combined.to_excel(ARSIV_DOSYASI, index=False)
 
-# ---------- İş Takip: otomatik iş aç ----------
+# ---------- İş Takip ----------
 def oncelik_hesapla(fark: float, tip: str) -> str:
     if tip == "OKUNAMADI":
         return "Orta"
@@ -449,13 +470,9 @@ def oncelik_hesapla(fark: float, tip: str) -> str:
     return "Düşük"
 
 def is_id_uret(donem: str, vkn: str, tip: str) -> str:
-    # stabil anahtar: donem|vkn|tip
     return f"{donem}|{vkn}|{tip}"
 
 def is_olustur_veya_guncelle(df_is: pd.DataFrame, row: dict) -> pd.DataFrame:
-    """
-    RISKLI/OKUNAMADI için iş açar. Varsa günceller.
-    """
     donem = row.get("Dönem", "Bilinmiyor")
     vkn = row.get("VKN", "Bulunamadı")
     tip = row.get("Durum", "")
@@ -474,7 +491,6 @@ def is_olustur_veya_guncelle(df_is: pd.DataFrame, row: dict) -> pd.DataFrame:
 
     mask = (df_is["IsID"].astype(str) == str(isid))
     if mask.any():
-        # güncelle
         idx = df_is[mask].index[0]
         df_is.loc[idx, "POS"] = str(pos)
         df_is.loc[idx, "Beyan"] = str(beyan)
@@ -504,6 +520,35 @@ def is_olustur_veya_guncelle(df_is: pd.DataFrame, row: dict) -> pd.DataFrame:
 
     return df_is
 
+def manuel_is_id_uret() -> str:
+    return "MANUEL-" + datetime.now().strftime("%Y%m%d%H%M%S")
+
+def manuel_is_ekle(df_is: pd.DataFrame, donem: str, mukellef: str, vkn: str, konu: str, aciklama: str,
+                   oncelik: str, sorumlu: str, sorumlu_tel: str) -> pd.DataFrame:
+    isid = manuel_is_id_uret()
+    not_text = f"Konu: {konu}\nAçıklama: {aciklama}".strip()
+
+    yeni = {
+        "IsID": isid,
+        "Dönem": donem or "",
+        "Mükellef": mukellef or "",
+        "VKN": vkn or "",
+        "Tip": "MANUEL",
+        "Durum": "AÇIK",
+        "Öncelik": oncelik or "Orta",
+        "POS": "",
+        "Beyan": "",
+        "Fark": "",
+        "Sorumlu": sorumlu or "",
+        "SorumluTel": sorumlu_tel or "",
+        "Not": not_text,
+        "OlusturmaZamani": now_str(),
+        "GuncellemeZamani": now_str(),
+        "KapanisZamani": ""
+    }
+    df_is = pd.concat([df_is, pd.DataFrame([yeni])], ignore_index=True)
+    return df_is
+
 def atama_mesaji_olustur(is_row: dict) -> str:
     return (
         "📌 *YENİ İŞ ATAMASI*\n"
@@ -515,11 +560,19 @@ def atama_mesaji_olustur(is_row: dict) -> str:
         f"⚠️ *Tip:* {is_row.get('Tip','')}\n"
         f"⭐ *Öncelik:* {is_row.get('Öncelik','')}\n"
         "━━━━━━━━━━━━━━━━\n"
-        f"💳 *POS:* {para_formatla(text_to_float(is_row.get('POS','0')))}\n"
-        f"🧾 *Beyan:* {para_formatla(text_to_float(is_row.get('Beyan','0')))}\n"
-        f"📌 *Fark:* {para_formatla(text_to_float(is_row.get('Fark','0')))}\n"
+        f"📝 *Not:* {is_row.get('Not','')}\n"
         "━━━━━━━━━━━━━━━━\n"
         "Lütfen inceleyip sonuç/not giriniz."
+    )
+
+def mukellef_bilgi_mesaji_olustur(is_row: dict) -> str:
+    # Mükellefe gidecek daha sade mesaj
+    return (
+        "Merhaba,\n"
+        "Tarafınızla ilgili bir kontrol/işlem kaydı oluşturulmuştur.\n"
+        f"📌 Konu/Not: {is_row.get('Not','')}\n"
+        f"📅 Dönem: {is_row.get('Dönem','')}\n"
+        "Geri dönüşünüz rica olunur."
     )
 
 # ---------- Açılış yüklemeleri ----------
@@ -585,7 +638,7 @@ if secim == "1. Excel Listesi Yükle":
         st.dataframe(st.session_state["mukellef_db"].head(20), use_container_width=True)
 
 # ==========================================
-# 7) 2. MENÜ: KDV ANALİZ ROBOTU + İŞ TAKİP
+# 7) 2. MENÜ: KDV ANALİZ ROBOTU + İŞ TAKİP (MANUEL İŞ DAHİL)
 # ==========================================
 elif secim == "2. KDV Analiz Robotu":
     st.title("🕵️‍♂️ KDV Analiz Üssü (Canlı Akış + İş Takip)")
@@ -594,277 +647,407 @@ elif secim == "2. KDV Analiz Robotu":
         st.warning("⚠️ Mükellef listesi bulunamadı. '1. Excel Listesi Yükle' menüsünden bir kez yükleyin.")
         st.stop()
 
-    pdf_files = st.file_uploader(
-        "İçinde bir veya yüzlerce beyanname olan PDF dosyasını yükleyin",
-        type=["pdf"],
-        accept_multiple_files=True
-    )
+    tabA, tabB = st.tabs(["📄 Beyanname Analizi", "🗂️ İş Takip (Manuel İş Emri + Atama)"])
 
-    if pdf_files and st.button("🚀 TÜM BEYANNAMELERİ ANALİZ ET", type="primary", use_container_width=True):
-        st.session_state["sonuclar"] = None
-        sonuclar = []
+    # ------------------ TAB A: ANALİZ ------------------
+    with tabA:
+        pdf_files = st.file_uploader(
+            "İçinde bir veya yüzlerce beyanname olan PDF dosyasını yükleyin",
+            type=["pdf"],
+            accept_multiple_files=True
+        )
 
-        st.subheader("Canlı Analiz Akışı")
-        terminal = st.empty()
-        logs = []
-        progress = st.progress(0)
-        pro_text = st.empty()
+        if pdf_files and st.button("🚀 TÜM BEYANNAMELERİ ANALİZ ET", type="primary", use_container_width=True):
+            st.session_state["sonuclar"] = None
+            sonuclar = []
 
-        all_blocks = []
-        log_yaz(logs, terminal, "Analiz başlatıldı. PDF metinleri okunuyor...", color="#ffc107")
+            st.subheader("Canlı Analiz Akışı")
+            terminal = st.empty()
+            logs = []
+            progress = st.progress(0)
+            pro_text = st.empty()
 
-        for pdf_file in pdf_files:
-            pdf_name = getattr(pdf_file, "name", "PDF")
-            try:
-                log_yaz(logs, terminal, f"[{pdf_name}] Metin çıkarılıyor...", color="#8ab4f8")
-                full_text = pdf_to_full_text(pdf_file)
-                blocks = split_beyannameler(full_text)
-                all_blocks.append((pdf_name, blocks))
-                log_yaz(logs, terminal, f"[{pdf_name}] Bulunan beyanname bloğu: {len(blocks)}", color="#8ab4f8")
-            except Exception as e:
-                all_blocks.append((pdf_name, []))
-                log_yaz(logs, terminal, f"[{pdf_name}] HATA: {e}", color="#ff6b6b")
+            all_blocks = []
+            log_yaz(logs, terminal, "Analiz başlatıldı. PDF metinleri okunuyor...", color="#ffc107")
 
-        total_blocks = sum(len(b) for _, b in all_blocks)
-        done = 0
+            for pdf_file in pdf_files:
+                pdf_name = getattr(pdf_file, "name", "PDF")
+                try:
+                    log_yaz(logs, terminal, f"[{pdf_name}] Metin çıkarılıyor...", color="#8ab4f8")
+                    full_text = pdf_to_full_text(pdf_file)
+                    blocks = split_beyannameler(full_text)
+                    all_blocks.append((pdf_name, blocks))
+                    log_yaz(logs, terminal, f"[{pdf_name}] Bulunan beyanname bloğu: {len(blocks)}", color="#8ab4f8")
+                except Exception as e:
+                    all_blocks.append((pdf_name, []))
+                    log_yaz(logs, terminal, f"[{pdf_name}] HATA: {e}", color="#ff6b6b")
 
-        if total_blocks == 0:
-            st.error("Beyanname bloğu bulunamadı. PDF metni okunamıyor veya ayraç farklı olabilir.")
-            st.stop()
+            total_blocks = sum(len(b) for _, b in all_blocks)
+            done = 0
 
-        log_yaz(logs, terminal, f"Toplam işlenecek blok: {total_blocks}", color="#ffc107")
+            if total_blocks == 0:
+                st.error("Beyanname bloğu bulunamadı. PDF metni okunamıyor veya ayraç farklı olabilir.")
+                st.stop()
 
-        for pdf_name, blocks in all_blocks:
-            for idx, block in enumerate(blocks, start=1):
-                done += 1
-                pct = int((done / max(total_blocks, 1)) * 100)
-                progress.progress(min(pct, 100))
-                pro_text.info(f"İlerleme: {done}/{total_blocks} (%{pct}) | {pdf_name} - Blok {idx}/{len(blocks)}")
+            log_yaz(logs, terminal, f"Toplam işlenecek blok: {total_blocks}", color="#ffc107")
 
-                ay, yil = donem_bul(block)
-                donem_str = "Bilinmiyor"
-                if ay and yil:
-                    donem_str = f"{ay} / {yil}"
-                elif yil and not ay:
-                    donem_str = f"{yil}"
-                elif ay and not yil:
-                    donem_str = f"{ay}"
+            for pdf_name, blocks in all_blocks:
+                for idx, block in enumerate(blocks, start=1):
+                    done += 1
+                    pct = int((done / max(total_blocks, 1)) * 100)
+                    progress.progress(min(pct, 100))
+                    pro_text.info(f"İlerleme: {done}/{total_blocks} (%{pct}) | {pdf_name} - Blok {idx}/{len(blocks)}")
 
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Dönem: {donem_str}", color="#8ab4f8")
+                    ay, yil = donem_bul(block)
+                    donem_str = "Bilinmiyor"
+                    if ay and yil:
+                        donem_str = f"{ay} / {yil}"
+                    elif yil and not ay:
+                        donem_str = f"{yil}"
+                    elif ay and not yil:
+                        donem_str = f"{ay}"
 
-                vkn = vkn_bul(block)
-                isim = isim_eslestir_excel(vkn)
+                    vkn = vkn_bul(block)
+                    isim = isim_eslestir_excel(vkn)
 
-                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] VKN/TCKN: {vkn or 'Bulunamadı'} | Mükellef: {isim}", color="#d7d7d7")
+                    matrah = first_amount_after_label(block, MATRAH_AYLIK_IFADESI, lookahead_chars=620)
+                    kdv = first_amount_after_label(block, KDV_TOPLAM_IFADESI, lookahead_chars=680)
+                    if kdv == 0.0:
+                        kdv = first_amount_after_label(block, KDV_HESAPLANAN_IFADESI, lookahead_chars=780)
+                    pos = pos_bul_istenen_satirdan(block)
 
-                matrah = first_amount_after_label(block, MATRAH_AYLIK_IFADESI, lookahead_chars=620)
-                kdv = first_amount_after_label(block, KDV_TOPLAM_IFADESI, lookahead_chars=680)
-                if kdv == 0.0:
-                    kdv = first_amount_after_label(block, KDV_HESAPLANAN_IFADESI, lookahead_chars=780)
-                pos = pos_bul_istenen_satirdan(block)
+                    beyan_toplami = matrah + kdv
+                    fark = pos - beyan_toplami
 
-                beyan_toplami = matrah + kdv
-                fark = pos - beyan_toplami
-
-                if pos > 0 and beyan_toplami == 0:
-                    durum = "OKUNAMADI"
-                    renk = "#ffc107"
-                elif fark > RISK_ESIK:
-                    durum = "RISKLI"
-                    renk = "#ff6b6b"
-                else:
-                    durum = "TEMIZ"
-                    renk = "#28a745"
-
-                log_yaz(
-                    logs, terminal,
-                    f"[{pdf_name} | {idx}] Matrah={para_formatla(matrah)} | KDV={para_formatla(kdv)} | POS={para_formatla(pos)} | FARK={para_formatla(fark)} | {durum}",
-                    color=renk
-                )
-
-                sonuclar.append({
-                    "Dönem": donem_str,
-                    "Mükellef": isim,
-                    "VKN": vkn or "Bulunamadı",
-                    "Matrah(Aylık)": matrah,
-                    "KDV": kdv,
-                    "POS": pos,
-                    "Beyan": beyan_toplami,
-                    "Fark": fark,
-                    "Durum": durum
-                })
-
-                time.sleep(0.01)
-
-        progress.progress(100)
-        pro_text.success(f"Analiz tamamlandı. Toplam {total_blocks} beyanname bloğu işlendi.")
-        log_yaz(logs, terminal, "Analiz tamamlandı.", color="#28a745")
-
-        df_sonuc = pd.DataFrame(sonuclar) if sonuclar else pd.DataFrame()
-        st.session_state["sonuclar"] = df_sonuc
-
-        # Arşive ekle
-        if not df_sonuc.empty:
-            df_arsivlik = df_sonuc[df_sonuc["Durum"].isin(["RISKLI", "OKUNAMADI"])].copy()
-            if not df_arsivlik.empty:
-                df_arsivlik["KayitZamani"] = now_str()
-                arsive_ekle(df_arsivlik)
-                st.toast("📌 Riskli/Okunamayan kayıtlar arşive işlendi.")
-
-        # İş aç/güncelle
-        df_is = is_takip_yukle()
-        if not df_sonuc.empty:
-            df_problem = df_sonuc[df_sonuc["Durum"].isin(["RISKLI", "OKUNAMADI"])].copy()
-            if not df_problem.empty:
-                for _, rr in df_problem.iterrows():
-                    df_is = is_olustur_veya_guncelle(df_is, rr.to_dict())
-                is_takip_kaydet(df_is)
-                st.toast("🗂️ İş Takip: Problemli kayıtlar için işler oluşturuldu/güncellendi.")
-
-    # Sonuç ekranı + İş Takip sekmesi
-    if st.session_state.get("sonuclar") is not None:
-        df_sonuc = st.session_state["sonuclar"]
-        if not df_sonuc.empty:
-            riskliler = df_sonuc[df_sonuc["Durum"] == "RISKLI"]
-            temizler = df_sonuc[df_sonuc["Durum"] == "TEMIZ"]
-            okunamayanlar = df_sonuc[df_sonuc["Durum"] == "OKUNAMADI"]
-
-            st.subheader("Analiz Sonuçları")
-            tab1, tab2, tab3, tab4 = st.tabs([
-                f"🚨 RİSKLİ ({len(riskliler)})",
-                f"✅ UYUMLU ({len(temizler)})",
-                f"❓ OKUNAMAYAN ({len(okunamayanlar)})",
-                "🗂️ İŞ TAKİP"
-            ])
-
-            with tab1:
-                if not riskliler.empty:
-                    st.error(f"{len(riskliler)} kayıt risklidir. İsterseniz ihbar gönderin veya iş ataması yapın.")
-                    for i, row in riskliler.iterrows():
-                        col1, col2 = st.columns([4, 1])
-                        with col1:
-                            st.markdown(f"""
-                            <div class='card risk-card'>
-                                <div class='card-title'>{row['Mükellef']}</div>
-                                <div class='card-sub'>Dönem: {row['Dönem']} | VKN/TCKN: {row['VKN']}</div>
-                                <div style='display:flex; gap:15px; margin-top:10px'>
-                                    <div><span class='stat-lbl'>POS</span><br><span class='stat-val'>{para_formatla(row['POS'])}</span></div>
-                                    <div><span class='stat-lbl'>BEYAN</span><br><span class='stat-val'>{para_formatla(row['Beyan'])}</span></div>
-                                </div>
-                                <div style='color:#d32f2f; font-weight:bold; margin-top:10px; font-size:16px;'>
-                                    FARK: {para_formatla(row['Fark'])}
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        with col2:
-                            if st.button("🚨 İHBAR ET", key=f"ihbar_{i}", type="primary", use_container_width=True):
-                                mesaj = risk_mesaji_olustur(row.to_dict())
-                                if whatsapp_gonder("SABIT", mesaj):
-                                    st.toast("✅ İhbar gönderildi.")
-                else:
-                    st.success("Riskli kayıt yok.")
-
-            with tab2:
-                st.dataframe(temizler, use_container_width=True)
-
-            with tab3:
-                st.dataframe(okunamayanlar, use_container_width=True)
-
-            with tab4:
-                st.info("Problemli kayıtlar otomatik iş olarak açılır. Buradan personele atayabilir, durum/not güncelleyebilirsiniz.")
-                df_is = is_takip_yukle()
-                df_personel = personel_yukle()
-
-                # filtreler
-                c1, c2, c3 = st.columns([2, 2, 2])
-                with c1:
-                    donem_list = ["(Tümü)"] + sorted([d for d in df_is["Dönem"].astype(str).unique() if d.strip()])
-                    f_donem = st.selectbox("Dönem", donem_list)
-                with c2:
-                    durum_list = ["(Tümü)", "AÇIK", "İNCELEMEDE", "KAPANDI", "İPTAL"]
-                    f_durum = st.selectbox("Durum", durum_list)
-                with c3:
-                    tip_list = ["(Tümü)", "RISKLI", "OKUNAMADI"]
-                    f_tip = st.selectbox("Tip", tip_list)
-
-                view = df_is.copy()
-                if f_donem != "(Tümü)":
-                    view = view[view["Dönem"].astype(str) == f_donem]
-                if f_durum != "(Tümü)":
-                    view = view[view["Durum"].astype(str) == f_durum]
-                if f_tip != "(Tümü)":
-                    view = view[view["Tip"].astype(str) == f_tip]
-
-                st.subheader("İş Listesi")
-                st.dataframe(view, use_container_width=True)
-
-                st.divider()
-                st.subheader("İş Atama / Güncelleme")
-
-                is_ids = view["IsID"].astype(str).tolist()
-                if not is_ids:
-                    st.warning("Seçilebilecek iş yok.")
-                else:
-                    sec_isid = st.selectbox("İş Seçin (IsID)", is_ids)
-
-                    sec_is = df_is[df_is["IsID"].astype(str) == str(sec_isid)]
-                    if sec_is.empty:
-                        st.error("İş bulunamadı.")
+                    if pos > 0 and beyan_toplami == 0:
+                        durum = "OKUNAMADI"
+                        renk = "#ffc107"
+                    elif fark > RISK_ESIK:
+                        durum = "RISKLI"
+                        renk = "#ff6b6b"
                     else:
-                        sec_is_row = sec_is.iloc[0].to_dict()
+                        durum = "TEMIZ"
+                        renk = "#28a745"
 
-                        aktif_personel = df_personel[df_personel["Aktif"].astype(str).str.lower().isin(["evet", "yes", "true", "1"])]
-                        personel_options = ["(Atama Yok)"] + aktif_personel["Personel"].astype(str).tolist()
+                    log_yaz(
+                        logs, terminal,
+                        f"[{pdf_name} | {idx}] Dönem={donem_str} | {isim[:28]} | POS={para_formatla(pos)} | BEYAN={para_formatla(beyan_toplami)} | FARK={para_formatla(fark)} | {durum}",
+                        color=renk
+                    )
 
-                        colA, colB = st.columns([2, 2])
-                        with colA:
-                            sec_personel = st.selectbox("Sorumlu Personel", personel_options)
-                            yeni_durum = st.selectbox("Durum", ["AÇIK", "İNCELEMEDE", "KAPANDI", "İPTAL"])
-                            yeni_not = st.text_area("Not / Yapılan İşlem", value=str(sec_is_row.get("Not", "")), height=90)
+                    sonuclar.append({
+                        "Dönem": donem_str,
+                        "Mükellef": isim,
+                        "VKN": vkn or "Bulunamadı",
+                        "Matrah(Aylık)": matrah,
+                        "KDV": kdv,
+                        "POS": pos,
+                        "Beyan": beyan_toplami,
+                        "Fark": fark,
+                        "Durum": durum
+                    })
 
-                        with colB:
-                            st.markdown("**İş Özeti**")
-                            st.write(f"**Dönem:** {sec_is_row.get('Dönem','')}")
-                            st.write(f"**Firma:** {sec_is_row.get('Mükellef','')}")
-                            st.write(f"**VKN:** {sec_is_row.get('VKN','')}")
-                            st.write(f"**Tip:** {sec_is_row.get('Tip','')} | **Öncelik:** {sec_is_row.get('Öncelik','')}")
-                            st.caption("Atamayı kaydedince isterseniz personele WhatsApp bilgilendirmesi gönderilir.")
+                    time.sleep(0.01)
 
-                            gonder_bildir = st.checkbox("Atama Bildirimi WhatsApp Gönder", value=True)
+            progress.progress(100)
+            pro_text.success(f"Analiz tamamlandı. Toplam {total_blocks} beyanname bloğu işlendi.")
+            log_yaz(logs, terminal, "Analiz tamamlandı.", color="#28a745")
 
-                        if st.button("💾 Atamayı / Güncellemeyi Kaydet", type="primary", use_container_width=True):
-                            # personel tel
-                            sorumlu_tel = ""
-                            if sec_personel != "(Atama Yok)":
-                                res = aktif_personel[aktif_personel["Personel"].astype(str) == sec_personel]
-                                if not res.empty:
-                                    sorumlu_tel = normalize_phone(res.iloc[0].get("Telefon", ""))
+            df_sonuc = pd.DataFrame(sonuclar) if sonuclar else pd.DataFrame()
+            st.session_state["sonuclar"] = df_sonuc
 
-                            # güncelle
-                            idx = df_is[df_is["IsID"].astype(str) == str(sec_isid)].index[0]
-                            df_is.loc[idx, "Sorumlu"] = "" if sec_personel == "(Atama Yok)" else sec_personel
-                            df_is.loc[idx, "SorumluTel"] = sorumlu_tel
-                            df_is.loc[idx, "Durum"] = yeni_durum
-                            df_is.loc[idx, "Not"] = yeni_not
-                            df_is.loc[idx, "GuncellemeZamani"] = now_str()
-                            if yeni_durum == "KAPANDI":
-                                if not str(df_is.loc[idx, "KapanisZamani"]).strip():
-                                    df_is.loc[idx, "KapanisZamani"] = now_str()
-                            else:
-                                # kapanıştan geri dönülürse kapanış zamanını silmeyelim (isteğe bağlı)
-                                pass
+            # Arşive ekle
+            if not df_sonuc.empty:
+                df_arsivlik = df_sonuc[df_sonuc["Durum"].isin(["RISKLI", "OKUNAMADI"])].copy()
+                if not df_arsivlik.empty:
+                    df_arsivlik["KayitZamani"] = now_str()
+                    arsive_ekle(df_arsivlik)
+                    st.toast("📌 Riskli/Okunamayan kayıtlar arşive işlendi.")
 
-                            is_takip_kaydet(df_is)
-                            st.success("Kaydedildi.")
+            # İş aç/güncelle
+            df_is = is_takip_yukle()
+            if not df_sonuc.empty:
+                df_problem = df_sonuc[df_sonuc["Durum"].isin(["RISKLI", "OKUNAMADI"])].copy()
+                if not df_problem.empty:
+                    for _, rr in df_problem.iterrows():
+                        df_is = is_olustur_veya_guncelle(df_is, rr.to_dict())
+                    is_takip_kaydet(df_is)
+                    st.toast("🗂️ İş Takip: Problemli kayıtlar için işler oluşturuldu/güncellendi.")
 
-                            # WhatsApp bilgilendirme
-                            if gonder_bildir and sorumlu_tel:
-                                msg = atama_mesaji_olustur(df_is.loc[idx].to_dict())
-                                ok = whatsapp_gonder(sorumlu_tel, msg)
-                                if ok:
+        # Analiz sonucu göster
+        if st.session_state.get("sonuclar") is not None:
+            df_sonuc = st.session_state["sonuclar"]
+            if df_sonuc is not None and not df_sonuc.empty:
+                riskliler = df_sonuc[df_sonuc["Durum"] == "RISKLI"]
+                temizler = df_sonuc[df_sonuc["Durum"] == "TEMIZ"]
+                okunamayanlar = df_sonuc[df_sonuc["Durum"] == "OKUNAMADI"]
+
+                st.subheader("Analiz Sonuçları")
+                t1, t2, t3 = st.tabs([
+                    f"🚨 RİSKLİ ({len(riskliler)})",
+                    f"✅ UYUMLU ({len(temizler)})",
+                    f"❓ OKUNAMAYAN ({len(okunamayanlar)})",
+                ])
+
+                with t1:
+                    if not riskliler.empty:
+                        for i, row in riskliler.iterrows():
+                            col1, col2 = st.columns([4, 1])
+                            with col1:
+                                st.markdown(f"""
+                                <div class='card risk-card'>
+                                    <div class='card-title'>{row['Mükellef']}</div>
+                                    <div class='card-sub'>Dönem: {row['Dönem']} | VKN/TCKN: {row['VKN']}</div>
+                                    <div style='display:flex; gap:15px; margin-top:10px'>
+                                        <div><span class='stat-lbl'>POS</span><br><span class='stat-val'>{para_formatla(row['POS'])}</span></div>
+                                        <div><span class='stat-lbl'>BEYAN</span><br><span class='stat-val'>{para_formatla(row['Beyan'])}</span></div>
+                                    </div>
+                                    <div style='color:#d32f2f; font-weight:bold; margin-top:10px; font-size:16px;'>
+                                        FARK: {para_formatla(row['Fark'])}
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                            with col2:
+                                if st.button("🚨 İHBAR ET", key=f"ihbar_{i}", type="primary", use_container_width=True):
+                                    mesaj = risk_mesaji_olustur(row.to_dict())
+                                    if whatsapp_gonder("SABIT", mesaj):
+                                        st.toast("✅ İhbar gönderildi.")
+                    else:
+                        st.success("Riskli kayıt yok.")
+                with t2:
+                    st.dataframe(temizler, use_container_width=True)
+                with t3:
+                    st.dataframe(okunamayanlar, use_container_width=True)
+
+    # ------------------ TAB B: İŞ TAKİP + MANUEL İŞ ------------------
+    with tabB:
+        st.info("Bu bölümde hem otomatik (analizden gelen) hem de manuel iş emirlerini yönetebilir, personele/mükellefe/serbest numaraya mesaj gönderebilirsiniz.")
+        df_is = is_takip_yukle()
+        df_personel = personel_yukle()
+
+        sub1, sub2 = st.tabs(["➕ Manuel İş Emri Oluştur", "📌 İş Listesi / Atama / Mesaj"])
+
+        # ---- Manuel İş Emri ----
+        with sub1:
+            col1, col2 = st.columns([2, 2])
+            with col1:
+                manuel_donem = st.text_input("Dönem (opsiyonel) - örn: Ocak / 2024", value="")
+                manuel_konu = st.text_input("İş Konusu", value="")
+                manuel_oncelik = st.selectbox("Öncelik", ["Yüksek", "Orta", "Düşük"], index=1)
+            with col2:
+                # Mükellef seçimi opsiyonel
+                muk_df = st.session_state.get("mukellef_db")
+                muk_options = ["(Seçmeyeceğim)"]
+                if muk_df is not None and not muk_df.empty:
+                    muk_options += muk_df["A_UNVAN"].astype(str).tolist()
+
+                manuel_muk = st.selectbox("Mükellef (opsiyonel)", muk_options)
+                manuel_vkn = st.text_input("VKN/TCKN (opsiyonel) - mükellef seçtiyseniz boş bırakabilirsiniz", value="")
+                manuel_aciklama = st.text_area("Açıklama / Talimat", height=110)
+
+            st.markdown("---")
+            st.subheader("Mesaj / Alıcı Seçimi")
+            alici_tipi = st.radio("Mesaj Kime Gidecek?", ["Personel", "Mükellef", "Serbest Numara"], horizontal=True)
+
+            sorumlu_ad = ""
+            sorumlu_tel = ""
+            hedef_tel = ""
+
+            if alici_tipi == "Personel":
+                aktif_personel = df_personel[df_personel["Aktif"].astype(str).str.lower().isin(["evet", "yes", "true", "1"])]
+                personel_options = ["(Seçiniz)"] + aktif_personel["Personel"].astype(str).tolist()
+                sorumlu_ad = st.selectbox("Sorumlu Personel", personel_options)
+                if sorumlu_ad != "(Seçiniz)":
+                    hit = aktif_personel[aktif_personel["Personel"].astype(str) == sorumlu_ad]
+                    if not hit.empty:
+                        sorumlu_tel = normalize_phone(hit.iloc[0].get("Telefon", ""))
+                hedef_tel = sorumlu_tel
+
+            elif alici_tipi == "Mükellef":
+                # mükellef seçildiyse tel otomatik
+                sec_unvan = "" if manuel_muk == "(Seçmeyeceğim)" else manuel_muk
+                sec_vkn = manuel_vkn.strip()
+                tel = mukellef_tel_bul(vkn=sec_vkn, unvan=sec_unvan)
+                hedef_tel = tel
+                st.caption(f"Mükellef telefonu (bulunan): {hedef_tel or 'Bulunamadı (Excel D sütunu)'}")
+
+            else:
+                hedef_tel = st.text_input("Serbest Numara (örn 905xxxxxxxxx)", value="")
+
+            gonder = st.checkbox("WhatsApp ile bilgilendirme gönder", value=True)
+
+            if st.button("✅ Manuel İş Emrini Kaydet", type="primary", use_container_width=True):
+                # mükellef bilgisi normalize
+                mukellef_unvan = "" if manuel_muk == "(Seçmeyeceğim)" else manuel_muk
+                vkn_final = manuel_vkn.strip()
+                if not vkn_final and mukellef_unvan:
+                    # unvandan VKN çekebilirsek çekelim
+                    dfm = st.session_state.get("mukellef_db")
+                    if dfm is not None and not dfm.empty:
+                        hit = dfm[dfm["A_UNVAN"].astype(str).str.lower() == mukellef_unvan.lower()]
+                        if not hit.empty:
+                            vkn_final = str(hit.iloc[0].get("C_VKN", "")).strip() or str(hit.iloc[0].get("B_TC", "")).strip()
+
+                # Personelse sorumlu alanına yazalım
+                sorumlu_save = sorumlu_ad if alici_tipi == "Personel" and sorumlu_ad != "(Seçiniz)" else ""
+                sorumlu_tel_save = hedef_tel if alici_tipi == "Personel" else ""
+
+                if not manuel_konu.strip():
+                    st.error("İş konusu boş olamaz.")
+                else:
+                    df_is2 = manuel_is_ekle(
+                        df_is=df_is,
+                        donem=manuel_donem.strip(),
+                        mukellef=mukellef_unvan.strip(),
+                        vkn=vkn_final,
+                        konu=manuel_konu.strip(),
+                        aciklama=manuel_aciklama.strip(),
+                        oncelik=manuel_oncelik,
+                        sorumlu=sorumlu_save,
+                        sorumlu_tel=sorumlu_tel_save
+                    )
+                    is_takip_kaydet(df_is2)
+                    st.success("Manuel iş emri kaydedildi.")
+                    st.toast("🗂️ İş Takip güncellendi.")
+
+                    # Mesaj gönder
+                    if gonder:
+                        # En son eklenen iş
+                        yeni_is = df_is2.iloc[-1].to_dict()
+                        if alici_tipi == "Personel":
+                            if hedef_tel:
+                                msg = atama_mesaji_olustur(yeni_is)
+                                if whatsapp_gonder(hedef_tel, msg):
                                     st.toast("📨 Personel bilgilendirildi.")
+                            else:
+                                st.warning("Personel telefonu bulunamadı. (Personel listesi kontrol ediniz)")
+                        elif alici_tipi == "Mükellef":
+                            if hedef_tel:
+                                msg = mukellef_bilgi_mesaji_olustur(yeni_is)
+                                if whatsapp_gonder(hedef_tel, msg):
+                                    st.toast("📨 Mükellefe mesaj gönderildi.")
+                            else:
+                                st.warning("Mükellef telefonu bulunamadı (Excel D sütunu).")
+                        else:
+                            if normalize_phone(hedef_tel):
+                                msg = mukellef_bilgi_mesaji_olustur(yeni_is)
+                                if whatsapp_gonder(hedef_tel, msg):
+                                    st.toast("📨 Mesaj gönderildi.")
+                            else:
+                                st.warning("Serbest numara geçersiz.")
+
+        # ---- İş listesi / atama / mesaj ----
+        with sub2:
+            # filtreler
+            c1, c2, c3 = st.columns([2, 2, 2])
+            with c1:
+                donem_list = ["(Tümü)"] + sorted([d for d in df_is["Dönem"].astype(str).unique() if d.strip()])
+                f_donem = st.selectbox("Dönem Filtresi", donem_list)
+            with c2:
+                durum_list = ["(Tümü)", "AÇIK", "İNCELEMEDE", "KAPANDI", "İPTAL"]
+                f_durum = st.selectbox("Durum Filtresi", durum_list)
+            with c3:
+                tip_list = ["(Tümü)", "RISKLI", "OKUNAMADI", "MANUEL"]
+                f_tip = st.selectbox("Tip Filtresi", tip_list)
+
+            view = df_is.copy()
+            if f_donem != "(Tümü)":
+                view = view[view["Dönem"].astype(str) == f_donem]
+            if f_durum != "(Tümü)":
+                view = view[view["Durum"].astype(str) == f_durum]
+            if f_tip != "(Tümü)":
+                view = view[view["Tip"].astype(str) == f_tip]
+
+            st.subheader("İş Listesi")
+            st.dataframe(view, use_container_width=True)
+
+            st.divider()
+            st.subheader("Seçili İş Üzerinde İşlem")
+            is_ids = view["IsID"].astype(str).tolist()
+            if not is_ids:
+                st.warning("Seçilebilecek iş yok.")
+            else:
+                sec_isid = st.selectbox("İş Seçin (IsID)", is_ids)
+                sec_is = df_is[df_is["IsID"].astype(str) == str(sec_isid)]
+                if sec_is.empty:
+                    st.error("İş bulunamadı.")
+                else:
+                    sec_is_row = sec_is.iloc[0].to_dict()
+
+                    aktif_personel = df_personel[df_personel["Aktif"].astype(str).str.lower().isin(["evet", "yes", "true", "1"])]
+                    personel_options = ["(Atama Yok)"] + aktif_personel["Personel"].astype(str).tolist()
+
+                    colA, colB = st.columns([2, 2])
+                    with colA:
+                        sec_personel = st.selectbox("Sorumlu Personel", personel_options, index=0)
+                        yeni_durum = st.selectbox("Durum", ["AÇIK", "İNCELEMEDE", "KAPANDI", "İPTAL"])
+                        yeni_not = st.text_area("Not / Yapılan İşlem", value=str(sec_is_row.get("Not", "")), height=110)
+
+                    with colB:
+                        st.markdown("**İş Özeti**")
+                        st.write(f"**İş:** {sec_is_row.get('IsID','')}")
+                        st.write(f"**Tip:** {sec_is_row.get('Tip','')} | **Öncelik:** {sec_is_row.get('Öncelik','')}")
+                        st.write(f"**Dönem:** {sec_is_row.get('Dönem','')}")
+                        st.write(f"**Firma:** {sec_is_row.get('Mükellef','')}")
+                        st.write(f"**VKN:** {sec_is_row.get('VKN','')}")
+                        st.caption("Kaydedince isterseniz personele veya mükellefe mesaj gönderebilirsiniz.")
+
+                        gonder_kime = st.selectbox("Mesaj Gönder (opsiyonel)", ["Gönderme", "Personele", "Mükellefe", "Serbest Numara"])
+                        serbest_tel = ""
+                        if gonder_kime == "Serbest Numara":
+                            serbest_tel = st.text_input("Serbest Numara", value="")
+
+                    if st.button("💾 Güncelle (Atama/Durum/Not)", type="primary", use_container_width=True):
+                        # personel tel
+                        sorumlu_tel = ""
+                        sorumlu_ad = ""
+                        if sec_personel != "(Atama Yok)":
+                            res = aktif_personel[aktif_personel["Personel"].astype(str) == sec_personel]
+                            if not res.empty:
+                                sorumlu_ad = sec_personel
+                                sorumlu_tel = normalize_phone(res.iloc[0].get("Telefon", ""))
+
+                        idx = df_is[df_is["IsID"].astype(str) == str(sec_isid)].index[0]
+                        df_is.loc[idx, "Sorumlu"] = sorumlu_ad
+                        df_is.loc[idx, "SorumluTel"] = sorumlu_tel
+                        df_is.loc[idx, "Durum"] = yeni_durum
+                        df_is.loc[idx, "Not"] = yeni_not
+                        df_is.loc[idx, "GuncellemeZamani"] = now_str()
+                        if yeni_durum == "KAPANDI" and not str(df_is.loc[idx, "KapanisZamani"]).strip():
+                            df_is.loc[idx, "KapanisZamani"] = now_str()
+
+                        is_takip_kaydet(df_is)
+                        st.success("Güncellendi.")
+
+                        # mesaj
+                        if gonder_kime != "Gönderme":
+                            guncel_is = df_is.loc[idx].to_dict()
+
+                            if gonder_kime == "Personele":
+                                if sorumlu_tel:
+                                    msg = atama_mesaji_olustur(guncel_is)
+                                    if whatsapp_gonder(sorumlu_tel, msg):
+                                        st.toast("📨 Personel bilgilendirildi.")
                                 else:
-                                    st.warning("Personel bilgilendirilemedi (WhatsApp).")
+                                    st.warning("Personel seçilmedi veya telefon bulunamadı.")
+
+                            elif gonder_kime == "Mükellefe":
+                                tel = mukellef_tel_bul(vkn=guncel_is.get("VKN",""), unvan=guncel_is.get("Mükellef",""))
+                                if tel:
+                                    msg = mukellef_bilgi_mesaji_olustur(guncel_is)
+                                    if whatsapp_gonder(tel, msg):
+                                        st.toast("📨 Mükellefe mesaj gönderildi.")
+                                else:
+                                    st.warning("Mükellef telefonu bulunamadı (Excel D sütunu).")
+
+                            else:
+                                tel = normalize_phone(serbest_tel)
+                                if tel:
+                                    msg = mukellef_bilgi_mesaji_olustur(guncel_is)
+                                    if whatsapp_gonder(tel, msg):
+                                        st.toast("📨 Mesaj gönderildi.")
+                                else:
+                                    st.warning("Serbest numara geçersiz.")
 
 # ==========================================
 # 8) 3. MENÜ: PROFESYONEL MESAJ
@@ -891,19 +1074,17 @@ elif secim == "3. Profesyonel Mesaj":
 elif secim == "4. Tasdik Robotu":
     st.title("🤖 Kayıtlar (Tasdik)")
 
-    tabA, tabB, tabC = st.tabs(["📋 Mükellef Listesi", "👥 Personel / Numara Yönetimi", "📊 Arşiv Durumu"])
+    tab1, tab2, tab3 = st.tabs(["📋 Mükellef Listesi", "👥 Personel / Numara Yönetimi", "📊 Arşiv & İş Takip Durumu"])
 
-    with tabA:
+    with tab1:
         if st.session_state.get("mukellef_db") is not None:
             st.info(f"Sistemde kayıtlı {len(st.session_state['mukellef_db'])} mükellef bulunmaktadır.")
             st.dataframe(st.session_state["mukellef_db"], use_container_width=True)
-            if os.path.exists(KALICI_EXCEL_YOLU):
-                st.caption("Not: Mükellef listesi kalıcı dosyadan otomatik yüklenir.")
         else:
             st.warning("Mükellef listesi yok. '1. Excel Listesi Yükle' menüsünden yükleyin.")
 
-    with tabB:
-        st.subheader("Personel Ekle (Numara Ekleme Butonu)")
+    with tab2:
+        st.subheader("Personel Ekle (Numara Ekleme)")
         df_personel = personel_yukle()
 
         col1, col2, col3 = st.columns([2, 2, 1])
@@ -921,7 +1102,6 @@ elif secim == "4. Tasdik Robotu":
                 st.error("Telefon numarası geçersiz.")
             else:
                 tel_norm = normalize_phone(p_tel)
-                # Aynı isim varsa güncelle, yoksa ekle
                 mask = df_personel["Personel"].astype(str).str.strip().str.lower() == str(p_ad).strip().lower()
                 if mask.any():
                     idx = df_personel[mask].index[0]
@@ -959,11 +1139,11 @@ elif secim == "4. Tasdik Robotu":
         else:
             st.warning("Henüz personel yok.")
 
-    with tabC:
-        st.subheader("Arşiv ve İş Takip Dosyaları")
-        st.write(f"📁 Arşiv dosyası: **{ARSIV_DOSYASI}** {'✅' if os.path.exists(ARSIV_DOSYASI) else '❌'}")
-        st.write(f"📁 İş takip dosyası: **{IS_TAKIP_DOSYASI}** {'✅' if os.path.exists(IS_TAKIP_DOSYASI) else '❌'}")
-        st.write(f"📁 Personel dosyası: **{PERSONEL_DOSYASI}** {'✅' if os.path.exists(PERSONEL_DOSYASI) else '❌'}")
+    with tab3:
+        st.subheader("Dosya Durumları")
+        st.write(f"📁 Arşiv: **{ARSIV_DOSYASI}** {'✅' if os.path.exists(ARSIV_DOSYASI) else '❌'}")
+        st.write(f"📁 İş Takip: **{IS_TAKIP_DOSYASI}** {'✅' if os.path.exists(IS_TAKIP_DOSYASI) else '❌'}")
+        st.write(f"📁 Personel: **{PERSONEL_DOSYASI}** {'✅' if os.path.exists(PERSONEL_DOSYASI) else '❌'}")
 
         ars = arsiv_oku()
         if not ars.empty:
