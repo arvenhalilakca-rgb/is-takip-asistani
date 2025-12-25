@@ -7,9 +7,10 @@ import requests
 import pandas as pd
 import streamlit as st
 from datetime import datetime, date
+from html import escape
 
 # =========================================================
-# 0) UYGULAMA KİMLİĞİ
+# 0) UYGULAMA AYARLARI
 # =========================================================
 st.set_page_config(
     page_title="Halil Akça Takip Sistemi",
@@ -22,12 +23,14 @@ ID_INSTANCE = st.secrets.get("ID_INSTANCE", "YOUR_INSTANCE_ID")
 API_TOKEN   = st.secrets.get("API_TOKEN", "YOUR_API_TOKEN")
 SABIT_IHBAR_NO = "905351041616"
 
+# Kalıcı dosyalar
 KALICI_EXCEL_YOLU     = "mukellef_db_kalici.xlsx"
 PERSONEL_DOSYASI      = "personel_db.xlsx"
 YAPILACAK_IS_DOSYASI  = "yapilacak_isler.xlsx"
 YAPILACAK_IS_BACKUP   = "yapilacak_isler.xlsx.bak"
 MUKELLEF_NOT_DOSYASI  = "mukellef_notlari.xlsx"
 
+# Yapılacak iş kolonları (stabil şema)
 YAPILACAK_IS_COLS = [
     "IsID","Tip","Durum","Öncelik","Dönem","Mükellef","VKN",
     "Konu","Açıklama","SonTarih","Sorumlu","SorumluTel","MükellefTelAll",
@@ -133,10 +136,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================================================
-# 2) YARDIMCILAR
+# 2) GENEL YARDIMCILAR
 # =========================================================
 def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def safe_html_text(x) -> str:
+    """Kullanıcı metnini HTML güvenli bas."""
+    s = escape(str(x or ""))
+    return s.replace("\n", "<br>")
 
 def normalize_phone(phone: str) -> str:
     p = re.sub(r"\D", "", str(phone or ""))
@@ -304,7 +312,7 @@ def msg_yapilacak_is_mukellef(r: dict) -> str:
     )
 
 # =========================================================
-# 5) SOL MENÜ (AYNEN)
+# 5) SOL MENÜ (ANA YAPI BOZULMAZ)
 # =========================================================
 if "mukellef_db" not in st.session_state or st.session_state["mukellef_db"] is None:
     st.session_state["mukellef_db"] = load_mukellef()
@@ -320,7 +328,7 @@ with st.sidebar:
     st.caption("Takip ve Yönetim Paneli")
 
 # =========================================================
-# 6) 1. EXCEL YÜKLE
+# 6) 1. EXCEL LİSTESİ YÜKLE
 # =========================================================
 if secim == "1. Excel Listesi Yükle":
     st.markdown("""
@@ -362,7 +370,7 @@ if secim == "1. Excel Listesi Yükle":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================================================
-# 7) 2. MODÜL: İŞ TAKİP + KDV ANALİZ AYRIMI
+# 7) 2. KDV ANALİZ ROBOTU (MODÜLLER AYRILDI)
 # =========================================================
 elif secim == "2. KDV Analiz Robotu":
     st.markdown("""
@@ -377,16 +385,14 @@ elif secim == "2. KDV Analiz Robotu":
         st.warning("Önce '1. Excel Listesi Yükle' menüsünden mükellef listesini yükleyin.")
         st.stop()
 
-    # ---- Burada iki ayrı sekme: sakin ekran ----
     tab_is, tab_kdv = st.tabs(["📌 Yapılacak İş Takip Paneli", "🧾 KDV Analiz Modülü"])
 
-    # =====================================================
-    # TAB 1: Yapılacak İş Takip Paneli (sizin mevcut paneliniz)
-    # =====================================================
+    # ----------------------------
+    # TAB 1: İŞ TAKİP PANELİ
+    # ----------------------------
     with tab_is:
         dfp = load_personel()
         dfy = load_yapilacak_isler()
-        dfn = load_mukellef_not()
 
         open_count = (dfy["Durum"].astype(str) == "AÇIK").sum()
         inq_count  = (dfy["Durum"].astype(str) == "İNCELEMEDE").sum()
@@ -412,8 +418,8 @@ elif secim == "2. KDV Analiz Robotu":
             tel_list = parse_phones(tel_all)
 
             st.markdown(
-                f'<span class="badge badge-blue">VKN/TCKN: {vkn or "-"}</span> '
-                f'<span class="badge">Tel: {tel_all or "-"}</span>',
+                f'<span class="badge badge-blue">VKN/TCKN: {safe_html_text(vkn) or "-"}</span> '
+                f'<span class="badge">Tel: {safe_html_text(tel_all) or "-"}</span>',
                 unsafe_allow_html=True
             )
 
@@ -520,8 +526,10 @@ elif secim == "2. KDV Analiz Robotu":
 
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # Liste
-        st.markdown('<div class="card"><h3>📌 Yapılacak İşler</h3><div class="hint">Duruma göre renkli görünüm.</div>', unsafe_allow_html=True)
+        # ----------------------------
+        # RENKLİ LİSTE (HTML KIRILMAZ)
+        # ----------------------------
+        st.markdown('<div class="card"><h3>📌 Yapılacak İşler</h3><div class="hint">Duruma göre renkli görünüm. Metinler HTML güvenli basılır.</div>', unsafe_allow_html=True)
 
         dfy = load_yapilacak_isler()
 
@@ -589,25 +597,38 @@ elif secim == "2. KDV Analiz Robotu":
 
                 gecik_pill = "<span class='pill'><strong>GECİKMİŞ</strong></span>" if gecik else ""
 
+                # HTML güvenli metinler
+                muk = safe_html_text(r.get("Mükellef",""))
+                konu = safe_html_text(r.get("Konu",""))
+                vknx = safe_html_text(r.get("VKN",""))
+                donemx = safe_html_text(r.get("Dönem","") or "-")
+                isidx = safe_html_text(r.get("IsID",""))
+                sor = safe_html_text(r.get("Sorumlu","") or "-")
+                ack = safe_html_text(r.get("Açıklama",""))
+                notx = safe_html_text(r.get("Not","") or "-")
+                durumx = safe_html_text(durum or "-")
+                oncx = safe_html_text(oncelik or "-")
+                sontx = safe_html_text(son_t or "-")
+
                 html = f"""
                 <div class="{status_class(durum)}">
                   <div class="strip"></div>
                   <div class="wrap">
                     <div class="top">
                       <div>
-                        <div class="title">{r.get("Mükellef","")} — {r.get("Konu","")}</div>
-                        <div class="sub">VKN: {r.get("VKN","")} · Dönem: {r.get("Dönem","") or "-"} · Kayıt: {r.get("IsID","")}</div>
+                        <div class="title">{muk} — {konu}</div>
+                        <div class="sub">VKN: {vknx} · Dönem: {donemx} · Kayıt: {isidx}</div>
                       </div>
-                      <div><span class="badge badge-blue">{durum or "-"}</span></div>
+                      <div><span class="badge badge-blue">{durumx}</span></div>
                     </div>
                     <div class="meta">
-                      <span class="pill"><strong>Öncelik:</strong> {oncelik or "-"}</span>
-                      <span class="pill"><strong>Son Tarih:</strong> {son_t or "-"}</span>
-                      <span class="pill"><strong>Sorumlu:</strong> {r.get("Sorumlu","") or "-"}</span>
+                      <span class="pill"><strong>Öncelik:</strong> {oncx}</span>
+                      <span class="pill"><strong>Son Tarih:</strong> {sontx}</span>
+                      <span class="pill"><strong>Sorumlu:</strong> {sor}</span>
                       {gecik_pill}
                     </div>
-                    <div class="sub" style="margin-top:8px;"><strong>Açıklama:</strong> {r.get("Açıklama","")}</div>
-                    <div class="sub"><strong>Not:</strong> {r.get("Not","") or "-"}</div>
+                    <div class="sub" style="margin-top:8px;"><strong>Açıklama:</strong> {ack}</div>
+                    <div class="sub"><strong>Not:</strong> {notx}</div>
                   </div>
                 </div>
                 """
@@ -615,7 +636,9 @@ elif secim == "2. KDV Analiz Robotu":
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Güncelleme
+        # ----------------------------
+        # SEÇİLİ KAYIT GÜNCELLEME
+        # ----------------------------
         st.markdown('<div class="card"><h3>🛠️ Seçili Yapılacak İş</h3><div class="hint">Silme yoktur. Sadece güncelleme.</div>', unsafe_allow_html=True)
 
         dfy_all = load_yapilacak_isler()
@@ -651,17 +674,39 @@ elif secim == "2. KDV Analiz Robotu":
                     updates["KapanisZamani"] = now_str()
 
                 update_yapilacak_is(sec_id, updates)
+
+                # Mesaj (opsiyonel)
+                cur_df = load_yapilacak_isler()
+                cur = cur_df[cur_df["IsID"].astype(str) == str(sec_id)].iloc[0].to_dict()
+
+                if target != "Gönderme":
+                    if target == "Sorumlu Personele":
+                        tel = normalize_phone(cur.get("SorumluTel",""))
+                        if tel:
+                            whatsapp_gonder(tel, msg_yapilacak_is_personel(cur))
+                    elif target == "Mükellefe":
+                        tels = parse_phones(cur.get("MükellefTelAll",""))
+                        if tels:
+                            if all_m:
+                                whatsapp_gonder_coklu(tels, msg_yapilacak_is_mukellef(cur))
+                            else:
+                                whatsapp_gonder(tels[0], msg_yapilacak_is_mukellef(cur))
+                    else:
+                        tel = normalize_phone(free)
+                        if tel:
+                            whatsapp_gonder(tel, msg_yapilacak_is_personel(cur))
+
                 st.success("Güncellendi.")
                 st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # =====================================================
-    # TAB 2: KDV Analiz Modülü (şimdilik ayrı, sakin)
-    # =====================================================
+    # ----------------------------
+    # TAB 2: KDV ANALİZ MODÜLÜ (Ayrı tutuldu)
+    # ----------------------------
     with tab_kdv:
         st.markdown('<div class="card"><h3>🧾 KDV Analiz Modülü</h3><div class="hint">Bu bölüm ayrı tutulur. İş takip ekranını dağıtmaz.</div>', unsafe_allow_html=True)
-        st.info("KDV analiz kodunuzu bu sekmeye taşıyarak ekranı temiz tutuyoruz. İsterseniz mevcut analiz modülünüzü aynen buraya entegre edebilirim.")
+        st.info("KDV analiz ekranınızı bu sekmede ayrı ve temiz şekilde çalıştırıyoruz. Mevcut KDV analiz kodunuz varsa buraya entegre edilir.")
         st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================================================
@@ -682,15 +727,15 @@ elif secim == "3. Profesyonel Mesaj":
 
     st.markdown('<div class="card"><h3>📤 Mesaj Gönder</h3><div class="hint">Tüm numaralara veya ilk numaraya gönderim yapabilirsiniz.</div>', unsafe_allow_html=True)
 
-    kisi = st.selectbox("Mükellef", dfm["A_UNVAN"].astype(str).tolist())
+    kisi = st.selectbox("Mükellef", dfm["A_UNVAN"].astype(str).tolist(), key="pm_kisi")
     rec = dfm[dfm["A_UNVAN"].astype(str) == str(kisi)].iloc[0].to_dict()
     tels = parse_phones(rec.get("D_TEL_ALL",""))
 
-    st.markdown(f'<span class="badge badge-blue">Telefonlar: {rec.get("D_TEL_ALL","") or "-"}</span>', unsafe_allow_html=True)
-    msg = st.text_area("Mesaj")
-    to_all = st.checkbox("Tüm numaralara gönder", value=True)
+    st.markdown(f'<span class="badge badge-blue">Telefonlar: {safe_html_text(rec.get("D_TEL_ALL","") or "-")}</span>', unsafe_allow_html=True)
+    msg = st.text_area("Mesaj", key="pm_msg")
+    to_all = st.checkbox("Tüm numaralara gönder", value=True, key="pm_all")
 
-    if st.button("Gönder", type="primary"):
+    if st.button("Gönder", type="primary", key="pm_send"):
         if to_all:
             sent = whatsapp_gonder_coklu(tels, msg)
             st.success(f"Gönderildi: {sent} numara")
@@ -718,9 +763,41 @@ elif secim == "4. Tasdik Robotu":
     with t1:
         st.markdown('<div class="card"><h3>📋 Mükellef Listesi</h3></div>', unsafe_allow_html=True)
         st.dataframe(load_mukellef(), use_container_width=True)
+
     with t2:
-        st.markdown('<div class="card"><h3>👥 Personel</h3></div>', unsafe_allow_html=True)
-        st.dataframe(load_personel(), use_container_width=True)
+        st.markdown('<div class="card"><h3>👥 Personel</h3><div class="hint">Personel yönetimi burada tutulur.</div>', unsafe_allow_html=True)
+        dfp = load_personel()
+
+        a, b, c = st.columns([2, 2, 1])
+        with a:
+            p_ad = st.text_input("Personel", key="p_ad")
+        with b:
+            p_tel = st.text_input("Telefon", key="p_tel")
+        with c:
+            p_aktif = st.selectbox("Aktif", ["Evet","Hayır"], index=0, key="p_aktif")
+
+        if st.button("➕ Kaydet", type="primary", use_container_width=True, key="p_kaydet"):
+            tel = normalize_phone(p_tel)
+            if not str(p_ad).strip():
+                st.error("Personel adı boş olamaz.")
+            elif not tel:
+                st.error("Telefon geçersiz.")
+            else:
+                m = dfp["Personel"].astype(str).str.strip().str.lower() == str(p_ad).strip().lower()
+                if m.any():
+                    idx = dfp[m].index[0]
+                    dfp.loc[idx, "Telefon"] = tel
+                    dfp.loc[idx, "Aktif"] = p_aktif
+                else:
+                    dfp = pd.concat([dfp, pd.DataFrame([{"Personel":p_ad.strip(), "Telefon":tel, "Aktif":p_aktif}])], ignore_index=True)
+
+                save_excel_safe(dfp, PERSONEL_DOSYASI, backup_path=None)
+                st.success("Kaydedildi.")
+                st.rerun()
+
+        st.dataframe(dfp, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
     with t3:
         st.markdown('<div class="card"><h3>🗂️ Yapılacak İşler (Ham)</h3><div class="hint">Silme yoktur. Kayıtlar kalıcıdır.</div>', unsafe_allow_html=True)
         st.dataframe(load_yapilacak_isler(), use_container_width=True)
