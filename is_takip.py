@@ -6,7 +6,7 @@ import requests
 import time
 
 # ==========================================
-# 1) AYARLAR & SABİTLER (MENÜ YAPISI BOZULMAZ)
+# 1) AYARLAR & SABİTLER (GENEL YAPI KORUNUR)
 # ==========================================
 st.set_page_config(
     page_title="Müşavir Kulesi (Canlı Akış & Akıllı Okuyucu)",
@@ -23,14 +23,22 @@ SABIT_IHBAR_NO = "905351041616"
 # Tek PDF içinde çoklu beyanname ayıracı
 BEYANNAME_AYRACI = "KATMA DEĞER VERGİSİ BEYANNAMESİ"
 
-# PDF şablonuna göre hedef ifadeler
+# Aranacak ifadeler
 MATRAH_AYLIK_IFADESI = "Teslim ve Hizmetlerin Karşılığını Teşkil Eden Bedel (aylık)"
 KDV_TOPLAM_IFADESI = "Toplam Katma Değer Vergisi"
 KDV_HESAPLANAN_IFADESI = "Hesaplanan Katma Değer Vergisi"
-POS_SATIRI_IFADESI = "Kredi Kartı İle Tahsil Edilen"
+
+# POS satırı (kullanıcının istediği satır)
+POS_SATIRI_TAM = "Kredi Kartı İle Tahsil Edilen Teslim ve Hizmetlerin KDV Dahil Karşılığını Teşkil Eden Bedel"
+
+# Sadece PARA FORMATINI yakala (VKN/TCKN gibi düz rakamları asla yakalama)
+AMOUNT_REGEX = r"(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})"
 
 # Risk eşiği (TL)
 RISK_ESIK = 50.0
+
+# Çok uçuk tutarları elemek için üst limit
+MAX_TUTAR_SANITY = 200_000_000  # 200 milyon TL
 
 # ==========================================
 # 2) CSS
@@ -48,7 +56,7 @@ st.markdown("""
 .card-sub {font-size: 12px; color: #666; margin-bottom: 10px;}
 .terminal-window {
     background-color: #1e1e1e; color: #f0f0f0; font-family: monospace;
-    padding: 15px; border-radius: 8px; height: 320px; overflow-y: auto;
+    padding: 15px; border-radius: 8px; height: 340px; overflow-y: auto;
     font-size: 13px; margin-bottom: 20px; border: 1px solid #333; line-height: 1.6;
 }
 </style>
@@ -66,10 +74,6 @@ if "mukellef_db" not in st.session_state:
 # 4) YARDIMCI FONKSİYONLAR
 # ==========================================
 def text_to_float(text) -> float:
-    """
-    TR format sayıları güvenle çevirir:
-    203.922,89 / 1.211.645,59 / 206183,59 / 810,00 / 123456
-    """
     try:
         if text is None:
             return 0.0
@@ -78,7 +82,7 @@ def text_to_float(text) -> float:
         if not t:
             return 0.0
 
-        # Hem nokta hem virgül varsa: en sağdaki ayıracı ondalık kabul et
+        # TR format: 1.234.567,89
         if "," in t and "." in t:
             if t.rfind(",") > t.rfind("."):
                 t = t.replace(".", "").replace(",", ".")
@@ -87,7 +91,7 @@ def text_to_float(text) -> float:
         elif "," in t:
             t = t.replace(".", "").replace(",", ".")
         else:
-            # sadece nokta varsa: 1.234.567 -> 1234567 (binlik)
+            # virgülsüz değerleri istemiyoruz (VKN vb.) ama yine de düşerse:
             parts = t.split(".")
             if len(parts) > 2:
                 t = t.replace(".", "")
@@ -105,7 +109,6 @@ def whatsapp_gonder(numara: str, mesaj: str) -> bool:
     if not numara or not ID_INSTANCE or not API_TOKEN:
         st.error("WhatsApp API bilgileri veya telefon numarası eksik.")
         return False
-
     target = f"{SABIT_IHBAR_NO}@c.us" if numara == "SABIT" else f"{numara}@c.us"
     url = f"https://api.green-api.com/waInstance{ID_INSTANCE}/sendMessage/{API_TOKEN}"
     try:
@@ -160,27 +163,27 @@ def pdf_to_full_text(pdf_file) -> str:
 
 def split_beyannameler(full_text: str):
     """
-    'KATMA DEĞER VERGİSİ BEYANNAMESİ' başlığı ile bloklara ayırır.
+    Delimiter pozisyonlarına göre keserek bloklar üretir.
+    re.split'e göre daha deterministiktir.
     """
     if not full_text:
         return []
-    parts = re.split(rf"(?i)({re.escape(BEYANNAME_AYRACI)})", full_text)
-    if len(parts) <= 1:
+    matches = list(re.finditer(re.escape(BEYANNAME_AYRACI), full_text, flags=re.IGNORECASE))
+    if not matches:
         return [full_text]
 
+    starts = [m.start() for m in matches]
     blocks = []
-    # parts: [önmetin, AYRAC, blok1, AYRAC, blok2, ...]
-    for i in range(1, len(parts), 2):
-        header = parts[i]
-        body = parts[i + 1] if i + 1 < len(parts) else ""
-        block = (header + "\n" + body).strip()
+    for i, s in enumerate(starts):
+        e = starts[i + 1] if i + 1 < len(starts) else len(full_text)
+        block = full_text[s:e].strip()
         if len(block) >= 300:
             blocks.append(block)
     return blocks
 
-def first_amount_after_label(text: str, label: str, lookahead_chars: int = 220) -> float:
+def first_amount_after_label(text: str, label: str, lookahead_chars: int = 420) -> float:
     """
-    label sonrası küçük bir pencerede ilk parasal değeri bulur.
+    label sonrası pencerede SADECE para formatlı (virgüllü) ilk tutarı yakalar.
     """
     if not text:
         return 0.0
@@ -188,37 +191,77 @@ def first_amount_after_label(text: str, label: str, lookahead_chars: int = 220) 
         m = re.search(re.escape(label), text, flags=re.IGNORECASE)
         if not m:
             return 0.0
-        start = m.end()
-        window = text[start:start + lookahead_chars]
-
-        # Tutar yakalama: 1.234.567,89 / 123.456 / 123456 / 810,00 vb.
-        amt = re.search(r"(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2}|\d{1,3}(?:\.\d{3})+|\d+)", window)
-        return text_to_float(amt.group(1)) if amt else 0.0
+        window = text[m.end(): m.end() + lookahead_chars]
+        amt = re.search(AMOUNT_REGEX, window)
+        if not amt:
+            return 0.0
+        val = text_to_float(amt.group(1))
+        if val <= 0 or val > MAX_TUTAR_SANITY:
+            return 0.0
+        return val
     except Exception:
         return 0.0
 
-def pos_bul_satir_bazli(text: str) -> float:
+def pos_bul_istenen_satirdan(text: str) -> float:
     """
-    'Kredi Kartı İle Tahsil Edilen ...' satırını bulur.
-    Bu satırdan SONRA gelen ilk tutarı POS kabul eder.
-    Böylece kümülatif/aylık toplamın POS diye alınması engellenir.
+    POS geliri: 'Kredi Kartı İle Tahsil Edilen Teslim ve Hizmetlerin KDV Dahil Karşılığını Teşkil Eden Bedel'
+    satırından okunur.
+
+    PDF'te bu ifade satırlara bölünebildiği için yaklaşım:
+    - Satırlar içinde 'Kredi Kartı İle Tahsil Edilen' geçen yeri bul.
+    - Aynı satırda / takip eden birkaç satırda,
+      '...KDV Dahil...Teşkil Eden' parçalarıyla birlikte görünen bölümden ilk para tutarını al.
+    - Sadece virgüllü para formatı kabul edilir; düz rakamlar (VKN) elenir.
     """
     if not text:
         return 0.0
+
     try:
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if not lines:
+            return 0.0
+
+        # Esnek anahtarlar (satır bölünmesine dayanıklı)
+        k1 = "Kredi Kartı İle Tahsil Edilen"
+        k2 = "KDV Dahil"
+        k3 = "Teşkil Eden"
+        k4 = "Bedel"
+
         for i, ln in enumerate(lines):
-            if re.search(POS_SATIRI_IFADESI, ln, flags=re.IGNORECASE):
-                for j in range(i + 1, min(i + 15, len(lines))):
-                    amt = re.search(r"(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2}|\d{1,3}(?:\.\d{3})+|\d+)", lines[j])
+            if re.search(re.escape(k1), ln, flags=re.IGNORECASE):
+                # Aynı satır + sonraki 5 satırı birleştirip arayalım
+                window_lines = lines[i:i + 6]
+                joined = " ".join(window_lines)
+
+                # Bu birleşimde istenen satırın parçaları geçiyor mu?
+                if (re.search(k2, joined, flags=re.IGNORECASE) and
+                    re.search(k3, joined, flags=re.IGNORECASE)):
+                    # Bu birleşimde ilk para tutarını al
+                    amt = re.search(AMOUNT_REGEX, joined)
                     if amt:
-                        return text_to_float(amt.group(1))
+                        val = text_to_float(amt.group(1))
+                        if 0 < val <= MAX_TUTAR_SANITY:
+                            return val
+
+                # Alternatif: aynı satırdan sonra, takip eden satırlarda ilk para tutarı
+                # (bazı şablonlarda "Bedel" ayrı satır olur)
+                for j in range(i, min(i + 10, len(lines))):
+                    amt2 = re.search(AMOUNT_REGEX, lines[j])
+                    if amt2:
+                        val2 = text_to_float(amt2.group(1))
+                        if 0 < val2 <= MAX_TUTAR_SANITY:
+                            return val2
+
         return 0.0
     except Exception:
         return 0.0
 
+def log_yaz(logs, terminal, msg, color="#f0f0f0"):
+    logs.append(f"<span style='color:{color};'>{msg}</span>")
+    terminal.markdown(f"<div class='terminal-window'>{'<br>'.join(logs[-260:])}</div>", unsafe_allow_html=True)
+
 # ==========================================
-# 5) ANA MENÜ (KORUNDU)
+# 5) ANA MENÜ (AYNEN KORUNUR)
 # ==========================================
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=60)
@@ -236,7 +279,6 @@ if secim == "1. Excel Listesi Yükle":
     if uploaded_file:
         try:
             raw_df = pd.read_excel(uploaded_file, dtype=str, header=None)
-
             df = pd.DataFrame()
             df["A_UNVAN"] = raw_df.iloc[:, 0].astype(str).str.strip()
             df["B_TC"] = raw_df.iloc[:, 1].astype(str).str.strip() if raw_df.shape[1] > 1 else ""
@@ -245,7 +287,6 @@ if secim == "1. Excel Listesi Yükle":
                 raw_df.iloc[:, 3].astype(str).str.strip().str.replace(r"\D", "", regex=True)
                 if raw_df.shape[1] > 3 else ""
             )
-
             st.session_state["mukellef_db"] = df.fillna("")
             st.success(f"✅ Başarılı! {len(df)} mükellef bilgisi yüklendi.")
         except Exception as e:
@@ -255,7 +296,7 @@ if secim == "1. Excel Listesi Yükle":
 # 7) 2. MENÜ: KDV ANALİZ ROBOTU
 # ==========================================
 elif secim == "2. KDV Analiz Robotu":
-    st.title("🕵️‍♂️ KDV Analiz Üssü (Canlı Akış & Akıllı Okuyucu)")
+    st.title("🕵️‍♂️ KDV Analiz Üssü (Canlı Akış & Proaktif Akış)")
 
     if st.session_state.get("mukellef_db") is None:
         st.warning("⚠️ Lütfen önce '1. Excel Listesi Yükle' menüsünden listenizi yükleyin.")
@@ -269,88 +310,105 @@ elif secim == "2. KDV Analiz Robotu":
 
     if pdf_files and st.button("🚀 TÜM BEYANNAMELERİ ANALİZ ET", type="primary", use_container_width=True):
         sonuclar = []
-        toplam_beyan = 0
+        st.session_state["sonuclar"] = None
 
         st.subheader("Canlı Analiz Akışı")
         terminal = st.empty()
         logs = []
+        progress = st.progress(0)
+        pro_text = st.empty()
 
+        # Önce toplam blok sayısını kestirelim (proaktif ilerleme yüzdesi için)
+        all_blocks = []
         for pdf_file in pdf_files:
             try:
                 full_text = pdf_to_full_text(pdf_file)
                 blocks = split_beyannameler(full_text)
+                all_blocks.append((getattr(pdf_file, "name", "PDF"), blocks))
+            except Exception:
+                all_blocks.append((getattr(pdf_file, "name", "PDF"), []))
 
-                for block in blocks:
-                    if not block.strip():
-                        continue
+        total_blocks = sum(len(b) for _, b in all_blocks)
+        done = 0
 
-                    toplam_beyan += 1
+        log_yaz(logs, terminal, "Analiz başlatıldı. PDF’ler okunuyor...", color="#ffc107")
 
-                    vkn = vkn_bul(block)
-                    isim = isim_eslestir_excel(vkn)
+        for pdf_name, blocks in all_blocks:
+            log_yaz(logs, terminal, f"PDF: {pdf_name} | Bulunan beyanname bloğu: {len(blocks)}", color="#8ab4f8")
 
-                    # Matrah: (aylık) bedel
-                    matrah = first_amount_after_label(
-                        block,
-                        MATRAH_AYLIK_IFADESI,
-                        lookahead_chars=200
-                    )
+            for idx, block in enumerate(blocks, start=1):
+                done += 1
+                pct = int((done / max(total_blocks, 1)) * 100)
+                progress.progress(min(pct, 100))
+                pro_text.info(f"İlerleme: {done}/{max(total_blocks,1)} (%{pct}) | Şu an: {pdf_name} - Blok {idx}/{len(blocks)}")
 
-                    # KDV: önce "Toplam KDV", yoksa "Hesaplanan KDV"
-                    kdv = first_amount_after_label(
-                        block,
-                        KDV_TOPLAM_IFADESI,
-                        lookahead_chars=220
-                    )
-                    if kdv == 0.0:
-                        kdv = first_amount_after_label(
-                            block,
-                            KDV_HESAPLANAN_IFADESI,
-                            lookahead_chars=260
-                        )
+                # Proaktif: bloğun temel aşamalarını tek tek logla
+                log_yaz(logs, terminal, f"[{pdf_name}] Blok {idx}: VKN/TCKN aranıyor...", color="#d7d7d7")
+                vkn = vkn_bul(block)
+                log_yaz(logs, terminal, f"[{pdf_name}] Blok {idx}: VKN/TCKN = {vkn or 'Bulunamadı'}", color="#d7d7d7")
 
-                    # POS: satır bazlı, ilk tutar
-                    pos = pos_bul_satir_bazli(block)
+                isim = isim_eslestir_excel(vkn)
+                log_yaz(logs, terminal, f"[{pdf_name}] Blok {idx}: Mükellef = {isim}", color="#d7d7d7")
 
-                    beyan_toplami = matrah + kdv
-                    fark = pos - beyan_toplami
+                # Matrah
+                log_yaz(logs, terminal, f"[{pdf_name}] Blok {idx}: Matrah(Aylık) aranıyor...", color="#d7d7d7")
+                matrah = first_amount_after_label(block, MATRAH_AYLIK_IFADESI, lookahead_chars=520)
+                log_yaz(logs, terminal, f"[{pdf_name}] Blok {idx}: Matrah(Aylık) = {para_formatla(matrah)}", color="#d7d7d7")
 
-                    if pos > 0 and beyan_toplami == 0:
-                        durum = "OKUNAMADI"
-                    elif fark > RISK_ESIK:
-                        durum = "RISKLI"
-                    else:
-                        durum = "TEMIZ"
+                # KDV
+                log_yaz(logs, terminal, f"[{pdf_name}] Blok {idx}: KDV aranıyor (Önce Toplam KDV)...", color="#d7d7d7")
+                kdv = first_amount_after_label(block, KDV_TOPLAM_IFADESI, lookahead_chars=560)
+                if kdv == 0.0:
+                    log_yaz(logs, terminal, f"[{pdf_name}] Blok {idx}: Toplam KDV bulunamadı. Hesaplanan KDV deneniyor...", color="#ffc107")
+                    kdv = first_amount_after_label(block, KDV_HESAPLANAN_IFADESI, lookahead_chars=620)
+                log_yaz(logs, terminal, f"[{pdf_name}] Blok {idx}: KDV = {para_formatla(kdv)}", color="#d7d7d7")
 
-                    log = (
-                        f" > Mükellef: {isim[:24]:<24} | "
-                        f"Matrah(Aylık): {para_formatla(matrah):>15} | "
-                        f"KDV: {para_formatla(kdv):>15} | "
-                        f"POS: {para_formatla(pos):>15} | Durum: {durum}"
-                    )
-                    renk = "#d32f2f" if durum == "RISKLI" else "#ffc107" if durum == "OKUNAMADI" else "#28a745"
-                    logs.append(f"<span style='color:{renk};'>{log}</span>")
-                    terminal.markdown(f"<div class='terminal-window'>{'<br>'.join(logs[-200:])}</div>", unsafe_allow_html=True)
-                    time.sleep(0.02)
+                # POS (istenen satır)
+                log_yaz(logs, terminal, f"[{pdf_name}] Blok {idx}: POS aranıyor (Kredi Kartı...KDV Dahil...Bedel satırı)...", color="#d7d7d7")
+                pos = pos_bul_istenen_satirdan(block)
+                log_yaz(logs, terminal, f"[{pdf_name}] Blok {idx}: POS = {para_formatla(pos)}", color="#d7d7d7")
 
-                    sonuclar.append({
-                        "Mükellef": isim,
-                        "VKN": vkn or "Bulunamadı",
-                        "Matrah(Aylık)": matrah,
-                        "KDV": kdv,
-                        "POS": pos,
-                        "Beyan": beyan_toplami,
-                        "Fark": fark,
-                        "Durum": durum
-                    })
+                # Hesap
+                beyan_toplami = matrah + kdv
+                fark = pos - beyan_toplami
 
-            except Exception as e:
-                st.error(f"'{getattr(pdf_file, 'name', 'PDF')}' işlenirken hata: {e}")
+                if pos > 0 and beyan_toplami == 0:
+                    durum = "OKUNAMADI"
+                    durum_renk = "#ffc107"
+                elif fark > RISK_ESIK:
+                    durum = "RISKLI"
+                    durum_renk = "#ff6b6b"
+                else:
+                    durum = "TEMIZ"
+                    durum_renk = "#28a745"
 
-        st.success(f"Analiz tamamlandı! Toplam **{toplam_beyan}** beyanname incelendi.")
+                log_yaz(
+                    logs,
+                    terminal,
+                    f"[{pdf_name}] Blok {idx}: BEYAN = {para_formatla(beyan_toplami)} | FARK = {para_formatla(fark)} | DURUM = {durum}",
+                    color=durum_renk
+                )
+
+                sonuclar.append({
+                    "Mükellef": isim,
+                    "VKN": vkn or "Bulunamadı",
+                    "Matrah(Aylık)": matrah,
+                    "KDV": kdv,
+                    "POS": pos,
+                    "Beyan": beyan_toplami,
+                    "Fark": fark,
+                    "Durum": durum
+                })
+
+                time.sleep(0.01)
+
+        progress.progress(100)
+        pro_text.success(f"Analiz tamamlandı. Toplam {total_blocks} beyanname bloğu işlendi.")
+        log_yaz(logs, terminal, "Analiz tamamlandı.", color="#28a745")
+
         st.session_state["sonuclar"] = pd.DataFrame(sonuclar) if sonuclar else pd.DataFrame()
 
-    # Sonuçlar
+    # Sonuç ekranı
     if st.session_state.get("sonuclar") is not None:
         df_sonuc = st.session_state["sonuclar"]
         if not df_sonuc.empty:
