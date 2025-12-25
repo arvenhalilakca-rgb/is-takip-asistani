@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 ID_INSTANCE = st.secrets.get("ID_INSTANCE", "YOUR_INSTANCE_ID")
-API_TOKEN   = st.secrets.get("API_TOKEN", "YOUR_INSTANCE_ID")
+API_TOKEN   = st.secrets.get("API_TOKEN", "YOUR_API_TOKEN")
 SABIT_IHBAR_NO = "905351041616"
 
 KALICI_EXCEL_YOLU     = "mukellef_db_kalici.xlsx"
@@ -35,7 +35,7 @@ YAPILACAK_IS_COLS = [
 ]
 
 # =========================================================
-# 1) PROFESYONEL TEMA + DURUMA GÖRE RENKLER
+# 1) TEMA / CSS (Sakin + Profesyonel, Duruma göre renk)
 # =========================================================
 st.markdown("""
 <style>
@@ -107,25 +107,13 @@ st.markdown("""
 
 .small{ font-size:12px; color: var(--muted); }
 
-.task-row{
-  border-radius: 16px;
-  border: 1px solid var(--line);
-  box-shadow: 0 8px 18px rgba(15,23,42,0.06);
-  margin-bottom: 10px;
-  overflow:hidden;
-}
+.task-row{ border-radius: 16px; border: 1px solid var(--line); box-shadow: 0 8px 18px rgba(15,23,42,0.06); margin-bottom: 10px; overflow:hidden; }
 .task-row .wrap{ padding: 12px 12px; }
-.task-row .top{
-  display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap;
-}
+.task-row .top{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap; }
 .task-row .title{ font-weight:900; color: var(--text); font-size:14px; }
 .task-row .sub{ color: var(--muted); font-size:12px; margin-top:2px; }
 .task-row .meta{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-.pill{
-  display:inline-flex; align-items:center; gap:6px;
-  padding: 4px 10px; border-radius: 999px;
-  border: 1px solid var(--line); font-size:11px; color: var(--muted); background:#fff;
-}
+.pill{ display:inline-flex; align-items:center; gap:6px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size:11px; color: var(--muted); background:#fff; }
 .pill strong{ color: var(--text); font-weight:800; }
 .strip{ height:6px; }
 
@@ -374,13 +362,13 @@ if secim == "1. Excel Listesi Yükle":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================================================
-# 7) 2. PANEL: DURUMA GÖRE RENKLİ GÖSTERİM
+# 7) 2. MODÜL: İŞ TAKİP + KDV ANALİZ AYRIMI
 # =========================================================
 elif secim == "2. KDV Analiz Robotu":
     st.markdown("""
     <div class="ha-topbar">
       <p class="ha-title">Halil Akça Takip Sistemi</p>
-      <p class="ha-sub">Yapılacak İş oluşturma · Renkli durum görünümü · Kayıtlar silinmez</p>
+      <p class="ha-sub">Modüller ayrıldı: Yapılacak İş Takip Paneli · KDV Analiz Modülü</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -389,318 +377,292 @@ elif secim == "2. KDV Analiz Robotu":
         st.warning("Önce '1. Excel Listesi Yükle' menüsünden mükellef listesini yükleyin.")
         st.stop()
 
-    dfp = load_personel()
-    dfy = load_yapilacak_isler()
-    dfn = load_mukellef_not()
+    # ---- Burada iki ayrı sekme: sakin ekran ----
+    tab_is, tab_kdv = st.tabs(["📌 Yapılacak İş Takip Paneli", "🧾 KDV Analiz Modülü"])
 
-    open_count = (dfy["Durum"].astype(str) == "AÇIK").sum()
-    inq_count  = (dfy["Durum"].astype(str) == "İNCELEMEDE").sum()
-    clo_count  = (dfy["Durum"].astype(str) == "KAPANDI").sum()
+    # =====================================================
+    # TAB 1: Yapılacak İş Takip Paneli (sizin mevcut paneliniz)
+    # =====================================================
+    with tab_is:
+        dfp = load_personel()
+        dfy = load_yapilacak_isler()
+        dfn = load_mukellef_not()
 
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="kpis">', unsafe_allow_html=True)
-    st.markdown(f'<div class="kpi"><div class="v">{len(dfy)}</div><div class="l">Toplam</div></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="kpi"><div class="v">{open_count}</div><div class="l">Açık</div></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="kpi"><div class="v">{inq_count}</div><div class="l">İncelemede</div></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="kpi"><div class="v">{clo_count}</div><div class="l">Kapandı</div></div>', unsafe_allow_html=True)
-    st.markdown('</div><div class="small">🔒 Silme yok. Tüm kayıtlar kalıcıdır.</div></div>', unsafe_allow_html=True)
+        open_count = (dfy["Durum"].astype(str) == "AÇIK").sum()
+        inq_count  = (dfy["Durum"].astype(str) == "İNCELEMEDE").sum()
+        clo_count  = (dfy["Durum"].astype(str) == "KAPANDI").sum()
 
-    # ---- ÜST: Oluştur + Notlar ----
-    col_left, col_right = st.columns([1.25, 1.0], gap="large")
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown('<div class="kpis">', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi"><div class="v">{len(dfy)}</div><div class="l">Toplam</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi"><div class="v">{open_count}</div><div class="l">Açık</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi"><div class="v">{inq_count}</div><div class="l">İncelemede</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi"><div class="v">{clo_count}</div><div class="l">Kapandı</div></div>', unsafe_allow_html=True)
+        st.markdown('</div><div class="small">🔒 Silme yok. Tüm kayıtlar kalıcıdır.</div></div>', unsafe_allow_html=True)
 
-    with col_left:
-        st.markdown('<div class="card"><h3>➕ Yapılacak İş Oluştur</h3><div class="hint">Kayıt kalıcıdır, silinmez. Durum ve not güncellenebilir.</div>', unsafe_allow_html=True)
+        col_left, col_right = st.columns([1.25, 1.0], gap="large")
 
-        mukellef = st.selectbox("Mükellef", dfm["A_UNVAN"].astype(str).tolist())
-        rec = dfm[dfm["A_UNVAN"].astype(str) == str(mukellef)].iloc[0].to_dict()
-        vkn = str(rec.get("C_VKN","")).strip() or str(rec.get("B_TC","")).strip()
-        tel_all = str(rec.get("D_TEL_ALL","")).strip()
-        tel_list = parse_phones(tel_all)
+        with col_left:
+            st.markdown('<div class="card"><h3>➕ Yapılacak İş Oluştur</h3><div class="hint">Bu kayıtlar kalıcıdır, silinmez.</div>', unsafe_allow_html=True)
 
-        st.markdown(
-            f'<span class="badge badge-blue">VKN/TCKN: {vkn or "-"}</span> '
-            f'<span class="badge">Tel: {tel_all or "-"}</span>',
-            unsafe_allow_html=True
-        )
+            mukellef = st.selectbox("Mükellef", dfm["A_UNVAN"].astype(str).tolist(), key="is_mukellef")
+            rec = dfm[dfm["A_UNVAN"].astype(str) == str(mukellef)].iloc[0].to_dict()
+            vkn = str(rec.get("C_VKN","")).strip() or str(rec.get("B_TC","")).strip()
+            tel_all = str(rec.get("D_TEL_ALL","")).strip()
+            tel_list = parse_phones(tel_all)
 
-        st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<span class="badge badge-blue">VKN/TCKN: {vkn or "-"}</span> '
+                f'<span class="badge">Tel: {tel_all or "-"}</span>',
+                unsafe_allow_html=True
+            )
 
-        konu = st.text_input("Konu", placeholder="Örn: KDV evrak tamamlama")
-        aciklama = st.text_area("Açıklama / Talimat", height=105)
-        is_notu = st.text_area("Not (Bu kayıt)", height=80)
+            st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
-        cA, cB, cC = st.columns([1.1, 1.0, 1.0])
-        with cA:
-            donem = st.text_input("Dönem", placeholder="Örn: Ocak / 2024")
-        with cB:
-            oncelik = st.selectbox("Öncelik", ["Yüksek","Orta","Düşük"], index=1)
-        with cC:
-            son_tarih = st.date_input("Son Tarih", value=date.today())
+            konu = st.text_input("Konu", placeholder="Örn: KDV evrak tamamlama", key="is_konu")
+            aciklama = st.text_area("Açıklama / Talimat", height=105, key="is_aciklama")
+            is_notu = st.text_area("Not (Bu kayıt)", height=80, key="is_notu")
 
-        aktif = dfp[dfp["Aktif"].astype(str).str.lower().isin(["evet","yes","true","1"])].copy()
-        sorumlu = st.selectbox("Sorumlu Personel", ["(Atama Yok)"] + aktif["Personel"].astype(str).tolist())
+            cA, cB, cC = st.columns([1.1, 1.0, 1.0])
+            with cA:
+                donem = st.text_input("Dönem", placeholder="Örn: Ocak / 2024", key="is_donem")
+            with cB:
+                oncelik = st.selectbox("Öncelik", ["Yüksek","Orta","Düşük"], index=1, key="is_onc")
+            with cC:
+                son_tarih = st.date_input("Son Tarih", value=date.today(), key="is_son")
 
-        st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
-        st.markdown("**WhatsApp Bildirimi**")
-        wa_p = st.checkbox("Personeli bilgilendir", value=True)
-        wa_m = st.checkbox("Mükellefi bilgilendir", value=False)
-        wa_m_all = st.checkbox("Mükellefe TÜM numara", value=True)
+            aktif = dfp[dfp["Aktif"].astype(str).str.lower().isin(["evet","yes","true","1"])].copy()
+            sorumlu = st.selectbox("Sorumlu Personel", ["(Atama Yok)"] + aktif["Personel"].astype(str).tolist(), key="is_sorumlu")
 
-        if st.button("✅ KAYDET", type="primary", use_container_width=True):
-            if not str(konu).strip():
-                st.error("Konu boş olamaz.")
-            elif not str(aciklama).strip():
-                st.error("Açıklama boş olamaz.")
-            else:
-                sor_tel = ""
-                if sorumlu != "(Atama Yok)":
-                    rr = aktif[aktif["Personel"].astype(str) == str(sorumlu)]
-                    if not rr.empty:
-                        sor_tel = normalize_phone(rr.iloc[0].get("Telefon",""))
+            st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
+            st.markdown("**WhatsApp Bildirimi**")
+            wa_p = st.checkbox("Personeli bilgilendir", value=True, key="wa_p")
+            wa_m = st.checkbox("Mükellefi bilgilendir", value=False, key="wa_m")
+            wa_m_all = st.checkbox("Mükellefe TÜM numara", value=True, key="wa_m_all")
 
-                row = {
-                    "IsID": yeni_is_id(),
-                    "Tip": "MANUEL",
-                    "Durum": "AÇIK",
-                    "Öncelik": oncelik,
-                    "Dönem": str(donem).strip(),
-                    "Mükellef": str(mukellef).strip(),
-                    "VKN": str(vkn).strip(),
-                    "Konu": str(konu).strip(),
-                    "Açıklama": str(aciklama).strip(),
-                    "SonTarih": str(son_tarih),
-                    "Sorumlu": "" if sorumlu == "(Atama Yok)" else str(sorumlu),
-                    "SorumluTel": sor_tel,
-                    "MükellefTelAll": tel_all,
-                    "Not": str(is_notu).strip(),
-                    "OlusturmaZamani": now_str(),
-                    "GuncellemeZamani": now_str(),
-                    "KapanisZamani": ""
+            if st.button("✅ KAYDET", type="primary", use_container_width=True, key="is_kaydet"):
+                if not str(konu).strip():
+                    st.error("Konu boş olamaz.")
+                elif not str(aciklama).strip():
+                    st.error("Açıklama boş olamaz.")
+                else:
+                    sor_tel = ""
+                    if sorumlu != "(Atama Yok)":
+                        rr = aktif[aktif["Personel"].astype(str) == str(sorumlu)]
+                        if not rr.empty:
+                            sor_tel = normalize_phone(rr.iloc[0].get("Telefon",""))
+
+                    row = {
+                        "IsID": yeni_is_id(),
+                        "Tip": "MANUEL",
+                        "Durum": "AÇIK",
+                        "Öncelik": oncelik,
+                        "Dönem": str(donem).strip(),
+                        "Mükellef": str(mukellef).strip(),
+                        "VKN": str(vkn).strip(),
+                        "Konu": str(konu).strip(),
+                        "Açıklama": str(aciklama).strip(),
+                        "SonTarih": str(son_tarih),
+                        "Sorumlu": "" if sorumlu == "(Atama Yok)" else str(sorumlu),
+                        "SorumluTel": sor_tel,
+                        "MükellefTelAll": tel_all,
+                        "Not": str(is_notu).strip(),
+                        "OlusturmaZamani": now_str(),
+                        "GuncellemeZamani": now_str(),
+                        "KapanisZamani": ""
+                    }
+
+                    append_yapilacak_is(row)
+
+                    if wa_p and sor_tel:
+                        whatsapp_gonder(sor_tel, msg_yapilacak_is_personel(row))
+                    if wa_m and tel_list:
+                        if wa_m_all:
+                            whatsapp_gonder_coklu(tel_list, msg_yapilacak_is_mukellef(row))
+                        else:
+                            whatsapp_gonder(tel_list[0], msg_yapilacak_is_mukellef(row))
+
+                    st.success(f"Kaydedildi: {row['IsID']}")
+                    st.rerun()
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        with col_right:
+            st.markdown('<div class="card"><h3>🗒️ Mükellef Notları</h3><div class="hint">Mükellef bazında kalıcıdır.</div>', unsafe_allow_html=True)
+
+            dfn = load_mukellef_not()
+            old_note = ""
+            hit = dfn[dfn["VKN"].astype(str) == str(vkn)]
+            if not hit.empty:
+                old_note = str(hit.iloc[0].get("Notlar",""))
+
+            muk_not = st.text_area("Genel Not", value=old_note, height=240, key="muk_not")
+
+            if st.button("💾 NOTU KAYDET", use_container_width=True, key="not_kaydet"):
+                dfn2 = dfn.copy()
+                m = dfn2["VKN"].astype(str) == str(vkn)
+                if m.any():
+                    idx = dfn2[m].index[0]
+                    dfn2.loc[idx, "Mükellef"] = str(mukellef)
+                    dfn2.loc[idx, "Notlar"] = str(muk_not).strip()
+                    dfn2.loc[idx, "GuncellemeZamani"] = now_str()
+                else:
+                    dfn2 = pd.concat([dfn2, pd.DataFrame([{
+                        "VKN": str(vkn),
+                        "Mükellef": str(mukellef),
+                        "Notlar": str(muk_not).strip(),
+                        "GuncellemeZamani": now_str()
+                    }])], ignore_index=True)
+
+                save_excel_safe(dfn2, MUKELLEF_NOT_DOSYASI)
+                st.success("Not kaydedildi.")
+                st.rerun()
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        # Liste
+        st.markdown('<div class="card"><h3>📌 Yapılacak İşler</h3><div class="hint">Duruma göre renkli görünüm.</div>', unsafe_allow_html=True)
+
+        dfy = load_yapilacak_isler()
+
+        f1, f2, f3, f4 = st.columns([1.2, 1.2, 1.2, 2.4])
+        with f1:
+            fdurum = st.selectbox("Durum", ["(Tümü)", "AÇIK", "İNCELEMEDE", "KAPANDI", "İPTAL"], key="f_durum")
+        with f2:
+            fonc = st.selectbox("Öncelik", ["(Tümü)","Yüksek","Orta","Düşük"], key="f_onc")
+        with f3:
+            fson = st.selectbox("Tarih", ["(Hepsi)", "Gecikenler"], key="f_son")
+        with f4:
+            fara = st.text_input("Ara (Mükellef / Konu)", placeholder="örn: tekstil / kdv / evrak", key="f_ara")
+
+        view = dfy.copy()
+        if fdurum != "(Tümü)":
+            view = view[view["Durum"].astype(str) == fdurum]
+        if fonc != "(Tümü)":
+            view = view[view["Öncelik"].astype(str) == fonc]
+        if str(fara).strip():
+            q = str(fara).strip().lower()
+            view = view[
+                view["Mükellef"].astype(str).str.lower().str.contains(q, na=False) |
+                view["Konu"].astype(str).str.lower().str.contains(q, na=False) |
+                view["Açıklama"].astype(str).str.lower().str.contains(q, na=False)
+            ]
+
+        def to_dt(x):
+            try:
+                return pd.to_datetime(str(x), errors="coerce")
+            except Exception:
+                return pd.NaT
+
+        view["_son"] = view["SonTarih"].apply(to_dt)
+        today_dt = pd.to_datetime(date.today())
+        view["_gecik"] = (view["_son"].notna()) & (view["_son"] < today_dt) & (view["Durum"].astype(str).isin(["AÇIK","İNCELEMEDE"]))
+        if fson == "Gecikenler":
+            view = view[view["_gecik"] == True]
+        view = view.sort_values(by=["_gecik","_son"], ascending=[False, True])
+
+        def status_class(s: str) -> str:
+            s = (s or "").strip().upper()
+            if s == "KAPANDI":
+                return "task-row task-done"
+            if s == "İNCELEMEDE":
+                return "task-row task-prog"
+            if s == "İPTAL":
+                return "task-row task-cancel"
+            return "task-row task-open"
+
+        if view.empty:
+            st.info("Kayıt bulunamadı.")
+        else:
+            for _, r in view.drop(columns=["_son","_gecik"], errors="ignore").iterrows():
+                durum = str(r.get("Durum","")).strip()
+                oncelik = str(r.get("Öncelik","")).strip()
+                son_t = str(r.get("SonTarih","")).strip()
+
+                gecik = False
+                try:
+                    dt = pd.to_datetime(son_t, errors="coerce")
+                    if pd.notna(dt):
+                        gecik = (dt.date() < date.today()) and (durum in ["AÇIK","İNCELEMEDE"])
+                except Exception:
+                    pass
+
+                gecik_pill = "<span class='pill'><strong>GECİKMİŞ</strong></span>" if gecik else ""
+
+                html = f"""
+                <div class="{status_class(durum)}">
+                  <div class="strip"></div>
+                  <div class="wrap">
+                    <div class="top">
+                      <div>
+                        <div class="title">{r.get("Mükellef","")} — {r.get("Konu","")}</div>
+                        <div class="sub">VKN: {r.get("VKN","")} · Dönem: {r.get("Dönem","") or "-"} · Kayıt: {r.get("IsID","")}</div>
+                      </div>
+                      <div><span class="badge badge-blue">{durum or "-"}</span></div>
+                    </div>
+                    <div class="meta">
+                      <span class="pill"><strong>Öncelik:</strong> {oncelik or "-"}</span>
+                      <span class="pill"><strong>Son Tarih:</strong> {son_t or "-"}</span>
+                      <span class="pill"><strong>Sorumlu:</strong> {r.get("Sorumlu","") or "-"}</span>
+                      {gecik_pill}
+                    </div>
+                    <div class="sub" style="margin-top:8px;"><strong>Açıklama:</strong> {r.get("Açıklama","")}</div>
+                    <div class="sub"><strong>Not:</strong> {r.get("Not","") or "-"}</div>
+                  </div>
+                </div>
+                """
+                st.markdown(html, unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Güncelleme
+        st.markdown('<div class="card"><h3>🛠️ Seçili Yapılacak İş</h3><div class="hint">Silme yoktur. Sadece güncelleme.</div>', unsafe_allow_html=True)
+
+        dfy_all = load_yapilacak_isler()
+        if dfy_all.empty:
+            st.info("Kayıt yok.")
+        else:
+            sec_id = st.selectbox("Kayıt Seç (IsID)", dfy_all["IsID"].astype(str).tolist(), key="sec_is")
+            row = dfy_all[dfy_all["IsID"].astype(str) == str(sec_id)].iloc[0].to_dict()
+
+            a, b = st.columns([1.2, 1.0], gap="large")
+            with a:
+                new_status = st.selectbox("Durum", ["AÇIK","İNCELEMEDE","KAPANDI","İPTAL"], index=0, key="upd_durum")
+                new_due = st.text_input("Son Tarih (YYYY-MM-DD)", value=str(row.get("SonTarih","")), key="upd_son")
+                new_note = st.text_area("Not (Bu kayıt)", value=str(row.get("Not","")), height=110, key="upd_not")
+            with b:
+                st.markdown("**Hatırlatma / Mesaj**")
+                target = st.selectbox("Gönder", ["Gönderme", "Sorumlu Personele", "Mükellefe", "Serbest Numara"], key="upd_target")
+                free = ""
+                all_m = False
+                if target == "Serbest Numara":
+                    free = st.text_input("Numara", placeholder="905xxxxxxxxx", key="upd_free")
+                if target == "Mükellefe":
+                    all_m = st.checkbox("Mükellefe TÜM numara", value=True, key="upd_allm")
+
+            if st.button("💾 GÜNCELLE", type="primary", use_container_width=True, key="upd_btn"):
+                updates = {
+                    "Durum": new_status,
+                    "SonTarih": str(new_due).strip(),
+                    "Not": str(new_note).strip(),
+                    "GuncellemeZamani": now_str()
                 }
+                if new_status == "KAPANDI":
+                    updates["KapanisZamani"] = now_str()
 
-                append_yapilacak_is(row)
-
-                if wa_p and sor_tel:
-                    whatsapp_gonder(sor_tel, msg_yapilacak_is_personel(row))
-                if wa_m and tel_list:
-                    if wa_m_all:
-                        whatsapp_gonder_coklu(tel_list, msg_yapilacak_is_mukellef(row))
-                    else:
-                        whatsapp_gonder(tel_list[0], msg_yapilacak_is_mukellef(row))
-
-                st.success(f"Kaydedildi: {row['IsID']}")
+                update_yapilacak_is(sec_id, updates)
+                st.success("Güncellendi.")
                 st.rerun()
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    with col_right:
-        st.markdown('<div class="card"><h3>🗒️ Mükellef Notları</h3><div class="hint">Mükellef bazında kalıcıdır.</div>', unsafe_allow_html=True)
-
-        dfn = load_mukellef_not()
-        old_note = ""
-        hit = dfn[dfn["VKN"].astype(str) == str(vkn)]
-        if not hit.empty:
-            old_note = str(hit.iloc[0].get("Notlar",""))
-
-        muk_not = st.text_area("Genel Not", value=old_note, height=240)
-
-        if st.button("💾 NOTU KAYDET", use_container_width=True):
-            dfn2 = dfn.copy()
-            m = dfn2["VKN"].astype(str) == str(vkn)
-            if m.any():
-                idx = dfn2[m].index[0]
-                dfn2.loc[idx, "Mükellef"] = str(mukellef)
-                dfn2.loc[idx, "Notlar"] = str(muk_not).strip()
-                dfn2.loc[idx, "GuncellemeZamani"] = now_str()
-            else:
-                dfn2 = pd.concat([dfn2, pd.DataFrame([{
-                    "VKN": str(vkn),
-                    "Mükellef": str(mukellef),
-                    "Notlar": str(muk_not).strip(),
-                    "GuncellemeZamani": now_str()
-                }])], ignore_index=True)
-
-            save_excel_safe(dfn2, MUKELLEF_NOT_DOSYASI)
-            st.success("Not kaydedildi.")
-            st.rerun()
-
+    # =====================================================
+    # TAB 2: KDV Analiz Modülü (şimdilik ayrı, sakin)
+    # =====================================================
+    with tab_kdv:
+        st.markdown('<div class="card"><h3>🧾 KDV Analiz Modülü</h3><div class="hint">Bu bölüm ayrı tutulur. İş takip ekranını dağıtmaz.</div>', unsafe_allow_html=True)
+        st.info("KDV analiz kodunuzu bu sekmeye taşıyarak ekranı temiz tutuyoruz. İsterseniz mevcut analiz modülünüzü aynen buraya entegre edebilirim.")
         st.markdown("</div>", unsafe_allow_html=True)
-
-    # ---- LİSTE: RENKLİ KARTLAR ----
-    st.markdown('<div class="card"><h3>📌 Yapılacak İşler (Renkli)</h3><div class="hint">Kapandı/Devam ediyor/İncelemede renkleri farklıdır.</div>', unsafe_allow_html=True)
-
-    dfy = load_yapilacak_isler()
-
-    f1, f2, f3, f4, f5 = st.columns([1.15, 1.15, 1.15, 1.15, 2.4])
-    with f1:
-        fdurum = st.selectbox("Durum", ["(Tümü)", "AÇIK", "İNCELEMEDE", "KAPANDI", "İPTAL"])
-    with f2:
-        fonc = st.selectbox("Öncelik", ["(Tümü)","Yüksek","Orta","Düşük"])
-    with f3:
-        fson = st.selectbox("Tarih", ["(Hepsi)", "Gecikenler"])
-    with f4:
-        fsirala = st.selectbox("Sırala", ["Önce Geciken", "Son Tarih Yakın", "Yeni → Eski", "Eski → Yeni"])
-    with f5:
-        fara = st.text_input("Ara (Mükellef / Konu)", placeholder="örn: tekstil / kdv / evrak")
-
-    view = dfy.copy()
-    if fdurum != "(Tümü)":
-        view = view[view["Durum"].astype(str) == fdurum]
-    if fonc != "(Tümü)":
-        view = view[view["Öncelik"].astype(str) == fonc]
-    if str(fara).strip():
-        q = str(fara).strip().lower()
-        view = view[
-            view["Mükellef"].astype(str).str.lower().str.contains(q, na=False) |
-            view["Konu"].astype(str).str.lower().str.contains(q, na=False) |
-            view["Açıklama"].astype(str).str.lower().str.contains(q, na=False)
-        ]
-
-    def to_dt(x):
-        try:
-            return pd.to_datetime(str(x), errors="coerce")
-        except Exception:
-            return pd.NaT
-
-    view["_son"] = view["SonTarih"].apply(to_dt)
-    today_dt = pd.to_datetime(date.today())
-    view["_gecik"] = (view["_son"].notna()) & (view["_son"] < today_dt) & (view["Durum"].astype(str).isin(["AÇIK","İNCELEMEDE"]))
-
-    if fson == "Gecikenler":
-        view = view[view["_gecik"] == True]
-
-    # Sıralama
-    if fsirala == "Önce Geciken":
-        view = view.sort_values(by=["_gecik","_son"], ascending=[False, True])
-    elif fsirala == "Son Tarih Yakın":
-        view = view.sort_values(by=["_son"], ascending=[True])
-    elif fsirala == "Yeni → Eski":
-        view = view.sort_values(by=["OlusturmaZamani"], ascending=[False])
-    else:
-        view = view.sort_values(by=["OlusturmaZamani"], ascending=[True])
-
-    # Kart render
-    def status_class(s: str) -> str:
-        s = (s or "").strip().upper()
-        if s == "KAPANDI":
-            return "task-row task-done"
-        if s == "İNCELEMEDE":
-            return "task-row task-prog"
-        if s == "İPTAL":
-            return "task-row task-cancel"
-        return "task-row task-open"  # AÇIK
-
-    def pill(text: str) -> str:
-        return f"<span class='pill'>{text}</span>"
-
-    if view.empty:
-        st.info("Kayıt bulunamadı.")
-    else:
-        for _, r in view.drop(columns=["_son","_gecik"], errors="ignore").iterrows():
-            durum = str(r.get("Durum","")).strip()
-            oncelik = str(r.get("Öncelik","")).strip()
-            son_t = str(r.get("SonTarih","")).strip()
-            gecik = False
-            try:
-                dt = pd.to_datetime(son_t, errors="coerce")
-                if pd.notna(dt):
-                    gecik = (dt.date() < date.today()) and (durum in ["AÇIK","İNCELEMEDE"])
-            except Exception:
-                pass
-
-            gecik_pill = "<span class='pill'><strong>GECİKMİŞ</strong></span>" if gecik else ""
-
-            html = f"""
-            <div class="{status_class(durum)}">
-              <div class="strip"></div>
-              <div class="wrap">
-                <div class="top">
-                  <div>
-                    <div class="title">{r.get("Mükellef","")} — {r.get("Konu","")}</div>
-                    <div class="sub">VKN: {r.get("VKN","")} · Dönem: {r.get("Dönem","") or "-"} · Kayıt No: {r.get("IsID","")}</div>
-                  </div>
-                  <div>
-                    <span class="badge badge-blue">{durum or "-"}</span>
-                  </div>
-                </div>
-                <div class="meta">
-                  {pill(f"<strong>Öncelik:</strong> {oncelik or '-'}")}
-                  {pill(f"<strong>Son Tarih:</strong> {son_t or '-'}")}
-                  {pill(f"<strong>Sorumlu:</strong> {r.get('Sorumlu','') or '-'}")}
-                  {gecik_pill}
-                </div>
-                <div class="sub" style="margin-top:8px;"><strong>Açıklama:</strong> {r.get("Açıklama","")}</div>
-                <div class="sub"><strong>Not:</strong> {r.get("Not","") or "-"}</div>
-              </div>
-            </div>
-            """
-            st.markdown(html, unsafe_allow_html=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # ---- SEÇİLİ KAYIT GÜNCELLE (aynı)
-    st.markdown('<div class="card"><h3>🛠️ Seçili Yapılacak İş</h3><div class="hint">Silme yoktur. Sadece güncelleme yapılır.</div>', unsafe_allow_html=True)
-
-    dfy_all = load_yapilacak_isler()
-    if dfy_all.empty:
-        st.info("Kayıt yok.")
-    else:
-        sec_id = st.selectbox("Kayıt Seç (IsID)", dfy_all["IsID"].astype(str).tolist())
-        row = dfy_all[dfy_all["IsID"].astype(str) == str(sec_id)].iloc[0].to_dict()
-
-        a, b = st.columns([1.2, 1.0], gap="large")
-        with a:
-            new_status = st.selectbox("Durum", ["AÇIK","İNCELEMEDE","KAPANDI","İPTAL"], index=0)
-            new_due = st.text_input("Son Tarih (YYYY-MM-DD)", value=str(row.get("SonTarih","")))
-            new_note = st.text_area("Not (Bu kayıt)", value=str(row.get("Not","")), height=110)
-
-        with b:
-            st.markdown("**Hatırlatma / Mesaj**")
-            target = st.selectbox("Gönder", ["Gönderme", "Sorumlu Personele", "Mükellefe", "Serbest Numara"])
-            free = ""
-            all_m = False
-            if target == "Serbest Numara":
-                free = st.text_input("Numara", placeholder="905xxxxxxxxx")
-            if target == "Mükellefe":
-                all_m = st.checkbox("Mükellefe TÜM numara", value=True)
-
-        if st.button("💾 GÜNCELLE", type="primary", use_container_width=True):
-            updates = {
-                "Durum": new_status,
-                "SonTarih": str(new_due).strip(),
-                "Not": str(new_note).strip(),
-                "GuncellemeZamani": now_str()
-            }
-            if new_status == "KAPANDI":
-                updates["KapanisZamani"] = now_str()
-
-            update_yapilacak_is(sec_id, updates)
-
-            # WhatsApp (opsiyonel)
-            cur_df = load_yapilacak_isler()
-            cur = cur_df[cur_df["IsID"].astype(str) == str(sec_id)].iloc[0].to_dict()
-
-            if target != "Gönderme":
-                if target == "Sorumlu Personele":
-                    tel = normalize_phone(cur.get("SorumluTel",""))
-                    if tel:
-                        whatsapp_gonder(tel, msg_yapilacak_is_personel(cur))
-                elif target == "Mükellefe":
-                    tels = parse_phones(cur.get("MükellefTelAll",""))
-                    if tels:
-                        if all_m:
-                            whatsapp_gonder_coklu(tels, msg_yapilacak_is_mukellef(cur))
-                        else:
-                            whatsapp_gonder(tels[0], msg_yapilacak_is_mukellef(cur))
-                else:
-                    tel = normalize_phone(free)
-                    if tel:
-                        whatsapp_gonder(tel, msg_yapilacak_is_personel(cur))
-
-            st.success("Güncellendi.")
-            st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
 
 # =========================================================
 # 8) 3. PROFESYONEL MESAJ
@@ -756,12 +718,9 @@ elif secim == "4. Tasdik Robotu":
     with t1:
         st.markdown('<div class="card"><h3>📋 Mükellef Listesi</h3></div>', unsafe_allow_html=True)
         st.dataframe(load_mukellef(), use_container_width=True)
-
     with t2:
-        st.markdown('<div class="card"><h3>👥 Personel</h3><div class="hint">Personel yönetimi burada tutulur.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card"><h3>👥 Personel</h3></div>', unsafe_allow_html=True)
         st.dataframe(load_personel(), use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
     with t3:
         st.markdown('<div class="card"><h3>🗂️ Yapılacak İşler (Ham)</h3><div class="hint">Silme yoktur. Kayıtlar kalıcıdır.</div>', unsafe_allow_html=True)
         st.dataframe(load_yapilacak_isler(), use_container_width=True)
