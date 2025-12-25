@@ -123,6 +123,25 @@ def whatsapp_gonder_coklu(numaralar: list, mesaj: str) -> int:
 def yeni_is_id() -> str:
     return "IS-" + datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6].upper()
 
+# VCF PARSER (Basit Rehber Okuyucu)
+def parse_vcf_content(content: str) -> list:
+    contacts = []
+    # VCard'ları ayır
+    cards = content.split("BEGIN:VCARD")
+    for card in cards:
+        if not card.strip(): continue
+        # İsim bul (FN:...)
+        name_match = re.search(r"FN:(.*)", card)
+        # Tel bul (TEL...:...)
+        tel_match = re.search(r"TEL.*:(.*)", card)
+        
+        if name_match and tel_match:
+            name = name_match.group(1).strip()
+            tel = normalize_phone(tel_match.group(1).strip())
+            if name and tel:
+                contacts.append({"Personel": name, "Telefon": tel, "Aktif": "Evet"})
+    return contacts
+
 # =========================================================
 # 3) VERİTABANI YÖNETİMİ (KAYIP ÖNLEME SİSTEMİ)
 # =========================================================
@@ -162,12 +181,10 @@ if "mukellef_not_db" not in st.session_state:
 
 # --- VERİ GÜNCELLEME FONKSİYONLARI ---
 def data_append_is(row: dict):
-    # 1. Session State Güncelle
     df = st.session_state["yapilacak_isler_db"]
     if not df.empty and (df["IsID"].astype(str) == str(row.get("IsID",""))).any(): return
     df2 = pd.concat([df, pd.DataFrame([row], columns=YAPILACAK_IS_COLS)], ignore_index=True)
     st.session_state["yapilacak_isler_db"] = df2
-    # 2. Excel Kaydet
     save_excel_safe(df2, YAPILACAK_IS_DOSYASI, YAPILACAK_IS_BACKUP)
 
 def data_update_is(isid: str, updates: dict):
@@ -178,7 +195,6 @@ def data_update_is(isid: str, updates: dict):
     idx = df[m].index[0]
     for k, v in updates.items():
         if k in df.columns: df.loc[idx, k] = v
-    # Session State ve Excel Güncelle
     st.session_state["yapilacak_isler_db"] = df
     save_excel_safe(df, YAPILACAK_IS_DOSYASI, YAPILACAK_IS_BACKUP)
 
@@ -190,7 +206,7 @@ def msg_mukellef(r: dict) -> str:
     return (f"Merhaba,\nİşlem/talep:\n📌 {r.get('Konu','')}\n📝 {r.get('Açıklama','')}\n📅 Son Tarih: {r.get('SonTarih','')}")
 
 # =========================================================
-# 4) MENÜ YAPISI (VERİ KAYBI OLMADAN)
+# 4) MENÜ YAPISI
 # =========================================================
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=64)
@@ -200,13 +216,13 @@ with st.sidebar:
         ["1. Excel Listesi Yükle", "2. Yapılacak İşler", "3. KDV Analiz Modülü", "4. Profesyonel Mesaj", "5. Tasdik Robotu"],
         index=1
     )
-    st.caption("Veri Korumalı Sistem v2.0")
+    st.caption("Veri Korumalı Sistem v2.1")
 
 # ------------------------------------------------------------------
 # SAYFA 1: EXCEL YÜKLE
 # ------------------------------------------------------------------
 if secim == "1. Excel Listesi Yükle":
-    st.markdown("""<div class="ha-topbar"><p class="ha-title">Veri Yükleme</p><p class="ha-sub">Mükellef listesini yenileme</p></div>""", unsafe_allow_html=True)
+    st.markdown("""<div class="ha-topbar"><p class="ha-title">Veri Yükleme</p><p class="ha-sub">Mükellef veritabanı</p></div>""", unsafe_allow_html=True)
     st.markdown('<div class="card"><h3>📂 Mükellef Veritabanı</h3>', unsafe_allow_html=True)
     up = st.file_uploader("Excel seçin", type=["xlsx", "xls"])
     if up:
@@ -225,7 +241,6 @@ if secim == "1. Excel Listesi Yükle":
             df["D_TEL_ALL"] = raw[tel_col].apply(lambda x: " | ".join(parse_phones(x)))
             df["D_TEL"] = df["D_TEL_ALL"].apply(lambda x: (parse_phones(x)[0] if parse_phones(x) else ""))
             
-            # Hem hafızayı hem diski güncelle
             st.session_state["mukellef_db"] = df.fillna("")
             save_excel_safe(df, KALICI_EXCEL_YOLU)
             st.success(f"✅ Kaydedildi. Toplam: {len(df)}")
@@ -234,18 +249,17 @@ if secim == "1. Excel Listesi Yükle":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
-# SAYFA 2: YAPILACAK İŞLER (ANA EKRAN)
+# SAYFA 2: YAPILACAK İŞLER
 # ------------------------------------------------------------------
 elif secim == "2. Yapılacak İşler":
     st.markdown("""<div class="ha-topbar"><p class="ha-title">İş Takip Paneli</p><p class="ha-sub">Yönetim ve Atama Merkezi</p></div>""", unsafe_allow_html=True)
     
-    # Hafızadan verileri çek (Disk okumak yerine)
     dfm = st.session_state["mukellef_db"]
     dfp = st.session_state["personel_db"]
     dfy = st.session_state["yapilacak_isler_db"]
 
     if dfm.empty:
-        st.warning("Mükellef listesi boş. Lütfen 1. menüden yükleyin.")
+        st.warning("Mükellef listesi boş.")
         st.stop()
 
     # DASHBOARD
@@ -259,13 +273,11 @@ elif secim == "2. Yapılacak İşler":
     st.markdown("<br><h5>📊 Analiz</h5>", unsafe_allow_html=True)
     col_g1, col_g2 = st.columns(2)
     with col_g1:
-        if not dfy.empty:
-            st.bar_chart(dfy["Durum"].value_counts(), color="#0b5ed7")
+        if not dfy.empty: st.bar_chart(dfy["Durum"].value_counts(), color="#0b5ed7")
     with col_g2:
         if not dfy.empty:
             aktif = dfy[dfy["Durum"].isin(["AÇIK","İNCELEMEDE"])]
-            if not aktif.empty:
-                st.dataframe(aktif["Sorumlu"].value_counts().reset_index(name="İş Sayısı"), use_container_width=True, hide_index=True)
+            if not aktif.empty: st.dataframe(aktif["Sorumlu"].value_counts().reset_index(name="İş Sayısı"), use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
     # --- TOPLU İŞ OLUŞTURMA ---
@@ -450,7 +462,6 @@ elif secim == "2. Yapılacak İşler":
         st.markdown(html, unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # GÜNCELLEME DETAY
     if not dfy.empty:
         st.markdown('<div class="card"><h3>🛠️ Detay Düzenle</h3>', unsafe_allow_html=True)
         uid = st.selectbox("ID Seç", dfy["IsID"].tolist(), key="u_id")
@@ -471,11 +482,11 @@ elif secim == "2. Yapılacak İşler":
         st.markdown("</div>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
-# SAYFA 3: KDV ANALİZ (AYRI)
+# SAYFA 3: KDV ANALİZ
 # ------------------------------------------------------------------
 elif secim == "3. KDV Analiz Modülü":
     st.markdown("""<div class="ha-topbar"><p class="ha-title">KDV Analiz</p><p class="ha-sub">Vergi Kontrol Modülü</p></div>""", unsafe_allow_html=True)
-    st.info("Bu modül geliştirme aşamasındadır. KDV beyannamelerini buraya yükleyip analiz yapabileceksiniz.")
+    st.info("KDV beyannamelerini analiz etmek için burası kullanılacak.")
 
 # ------------------------------------------------------------------
 # SAYFA 4: MESAJ
@@ -499,22 +510,47 @@ elif secim == "4. Profesyonel Mesaj":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
-# SAYFA 5: TASDİK ROBOTU
+# SAYFA 5: TASDİK ROBOTU (Personel Yönetimi Dahil)
 # ------------------------------------------------------------------
 elif secim == "5. Tasdik Robotu":
     st.markdown("""<div class="ha-topbar"><p class="ha-title">Veri Kayıtları</p></div>""", unsafe_allow_html=True)
     t1,t2,t3 = st.tabs(["Mükellef","Personel","İşler"])
     with t1: st.dataframe(st.session_state["mukellef_db"], use_container_width=True)
+    
     with t2:
+        st.markdown("### 👥 Personel Yönetimi")
+        
+        # VCF YÜKLEME MODÜLÜ
+        st.info("Telefondan Kişileri Almak İçin: Rehber > Ayarlar > Kişileri Dışa Aktar > VCF dosyasını buraya yükle.")
+        vcf_up = st.file_uploader("Rehber Dosyası (VCF) Yükle", type=["vcf"])
+        
         d = st.session_state["personel_db"]
+        
+        if vcf_up:
+            try:
+                content = vcf_up.read().decode("utf-8")
+                new_contacts = parse_vcf_content(content)
+                if new_contacts:
+                    new_df = pd.DataFrame(new_contacts)
+                    d = pd.concat([d, new_df], ignore_index=True).drop_duplicates(subset=["Telefon"])
+                    st.session_state["personel_db"] = d
+                    save_excel_safe(d, PERSONEL_DOSYASI)
+                    st.success(f"✅ {len(new_contacts)} kişi rehberden eklendi!")
+                    st.rerun()
+            except Exception as e: st.error(f"Dosya okunamadı: {e}")
+
+        # MANUEL EKLEME
+        st.markdown("---")
         c1,c2,c3 = st.columns([2,2,1])
         with c1: pa = st.text_input("Ad")
         with c2: pt = st.text_input("Tel")
         with c3: pk = st.selectbox("Aktif",["Evet","Hayır"])
-        if st.button("Ekle"):
+        if st.button("Manuel Ekle"):
             d = pd.concat([d, pd.DataFrame([{"Personel":pa,"Telefon":normalize_phone(pt),"Aktif":pk}])], ignore_index=True)
             st.session_state["personel_db"] = d
             save_excel_safe(d, PERSONEL_DOSYASI)
             st.rerun()
+            
         st.dataframe(d, use_container_width=True)
+        
     with t3: st.dataframe(st.session_state["yapilacak_isler_db"], use_container_width=True)
