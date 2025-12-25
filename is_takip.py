@@ -96,7 +96,6 @@ def text_to_float(text) -> float:
         elif "," in t:
             t = t.replace(".", "").replace(",", ".")
         else:
-            # Buraya normalde düşmemeli (para formatını virgülle arıyoruz)
             t = t.replace(".", "")
         return float(t)
     except Exception:
@@ -218,9 +217,7 @@ def first_amount_after_label(text: str, label: str, lookahead_chars: int = 520) 
 def pos_bul_istenen_satirdan(text: str) -> float:
     """
     POS geliri: 'Kredi Kartı İle Tahsil Edilen ... KDV Dahil ... Bedel' satırından okunur.
-    Satır bölünmelerine dayanıklı:
-    - "Kredi Kartı İle Tahsil Edilen" bulunan satırdan itibaren birkaç satır birleştirilir.
-    - Birleşimde para formatlı ilk tutar POS kabul edilir.
+    Satır bölünmelerine dayanıklı.
     """
     if not text:
         return 0.0
@@ -230,7 +227,6 @@ def pos_bul_istenen_satirdan(text: str) -> float:
         if not lines:
             return 0.0
 
-        # Esnek parçalar
         k1 = "Kredi Kartı İle Tahsil Edilen"
         k2 = "KDV Dahil"
         k3 = "Teşkil Eden"
@@ -255,7 +251,6 @@ def pos_bul_istenen_satirdan(text: str) -> float:
                         if 0 < val <= MAX_TUTAR_SANITY:
                             return val
 
-                # Yedek: bu bölgedeki satırlarda ilk para tutarı
                 for j in range(i, min(i + 20, len(lines))):
                     amt2 = re.search(AMOUNT_REGEX, lines[j])
                     if amt2:
@@ -268,38 +263,71 @@ def pos_bul_istenen_satirdan(text: str) -> float:
         return 0.0
 
 
-def donem_bul(block_text: str):
-    """Beyanname bloğundan (Ay, Yıl) yakalar."""
-    if not block_text:
+def donem_bul(block_text):
+    """
+    Dönemi, beyanname üst bilgisinden daha deterministik yakalar:
+    Örnek: "DÖNEM TİPİ Yıl 2024" ve "Aylık Ay Ocak"
+    """
+    t = str(block_text or "")
+    if not t.strip():
         return (None, None)
 
-    aylar = [
-        "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
-        "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"
-    ]
+    # Arama daha stabil olsun diye tek satıra indir
+    t1 = re.sub(r"\s+", " ", t)
+
+    ay_map = {
+        "ocak": "Ocak",
+        "şubat": "Şubat",
+        "subat": "Şubat",
+        "mart": "Mart",
+        "nisan": "Nisan",
+        "mayıs": "Mayıs",
+        "mayis": "Mayıs",
+        "haziran": "Haziran",
+        "temmuz": "Temmuz",
+        "ağustos": "Ağustos",
+        "agustos": "Ağustos",
+        "eylül": "Eylül",
+        "eylul": "Eylül",
+        "ekim": "Ekim",
+        "kasım": "Kasım",
+        "kasim": "Kasım",
+        "aralık": "Aralık",
+        "aralik": "Aralık",
+    }
 
     yil = None
     ay = None
 
-    m_yil = re.search(r"Yıl\s*[\r\n\s]*?(20\d{2})", block_text, flags=re.IGNORECASE)
+    # Yıl: özellikle "DÖNEM TİPİ ... Yıl 2024" veya "Yıl 2024"
+    m_yil = re.search(r"(?:DÖNEM\s*TİPİ\s*)?Yıl\s*(20\d{2})", t1, flags=re.IGNORECASE)
     if m_yil:
         yil = m_yil.group(1)
     else:
-        m_yil2 = re.search(r"\b(20\d{2})\b", block_text)
+        m_yil2 = re.search(r"\b(20\d{2})\b", t1)
         if m_yil2:
             yil = m_yil2.group(1)
 
-    for a in aylar:
-        if re.search(rf"\b{re.escape(a)}\b", block_text, flags=re.IGNORECASE):
-            ay = a
-            break
+    # Ay: özellikle "Aylık Ay Ocak" veya "Ay Ocak"
+    m_ay = re.search(r"(?:Aylık\s*)?Ay\s*([A-Za-zÇĞİÖŞÜçğıöşü]+)", t1, flags=re.IGNORECASE)
+    if m_ay:
+        raw = m_ay.group(1).strip().lower()
+        raw = raw.replace("İ".lower(), "i")  # emniyet
+        ay = ay_map.get(raw, None)
+
+    # Yedek: metin içinde geçen ay adını ara
+    if not ay:
+        for k, v in ay_map.items():
+            if re.search(rf"\b{re.escape(k)}\b", t1, flags=re.IGNORECASE):
+                ay = v
+                break
 
     return (ay, yil)
 
 
 def risk_mesaji_olustur(row) -> str:
     """WhatsApp için göze çarpan risk mesajı üretir (Ay/Yıl dahil)."""
-    block_text = row.get("BlokMetin", "") or ""
+    block_text = str(row.get("BlokMetin", "") or "")
     ay, yil = donem_bul(block_text)
 
     if ay and yil:
@@ -314,7 +342,6 @@ def risk_mesaji_olustur(row) -> str:
     pos = float(row.get("POS", 0.0) or 0.0)
     beyan = float(row.get("Beyan", 0.0) or 0.0)
     fark = float(row.get("Fark", 0.0) or 0.0)
-
     oran = (fark / beyan * 100.0) if beyan > 0 else 0.0
 
     mesaj = (
@@ -413,7 +440,6 @@ if secim == "1. Excel Listesi Yükle":
 
             st.session_state["mukellef_db"] = df
 
-            # Kalıcı kaydet (header=False; eski şema ile uyumlu)
             df_out = df[["A_UNVAN", "B_TC", "C_VKN", "D_TEL"]]
             df_out.to_excel(KALICI_EXCEL_YOLU, index=False, header=False)
 
@@ -452,7 +478,6 @@ elif secim == "2. KDV Analiz Robotu":
         progress = st.progress(0)
         pro_text = st.empty()
 
-        # Ön hazırlık: toplam blok hesabı (proaktif yüzde)
         all_blocks = []
         log_yaz(logs, terminal, "Analiz başlatıldı. PDF metinleri okunuyor...", color="#ffc107")
 
@@ -484,21 +509,26 @@ elif secim == "2. KDV Analiz Robotu":
                 progress.progress(min(pct, 100))
                 pro_text.info(f"İlerleme: {done}/{total_blocks} (%{pct}) | {pdf_name} - Blok {idx}/{len(blocks)}")
 
-                # 1) VKN
+                # Dönem (loglarda da gösterelim)
+                ay, yil = donem_bul(block)
+                donem_log = f"{ay or '?'} / {yil or '?'}"
+                log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Dönem tespiti: {donem_log}", color="#8ab4f8")
+
+                # VKN
                 log_yaz(logs, terminal, f"[{pdf_name} | {idx}] VKN/TCKN aranıyor...", color="#d7d7d7")
                 vkn = vkn_bul(block)
                 log_yaz(logs, terminal, f"[{pdf_name} | {idx}] VKN/TCKN: {vkn or 'Bulunamadı'}", color="#d7d7d7")
 
-                # 2) Mükellef
+                # Mükellef
                 isim = isim_eslestir_excel(vkn)
                 log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Mükellef: {isim}", color="#d7d7d7")
 
-                # 3) Matrah(Aylık)
+                # Matrah(Aylık)
                 log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Matrah(Aylık) aranıyor...", color="#d7d7d7")
                 matrah = first_amount_after_label(block, MATRAH_AYLIK_IFADESI, lookahead_chars=620)
                 log_yaz(logs, terminal, f"[{pdf_name} | {idx}] Matrah(Aylık): {para_formatla(matrah)}", color="#d7d7d7")
 
-                # 4) KDV
+                # KDV
                 log_yaz(logs, terminal, f"[{pdf_name} | {idx}] KDV aranıyor (Toplam KDV)...", color="#d7d7d7")
                 kdv = first_amount_after_label(block, KDV_TOPLAM_IFADESI, lookahead_chars=680)
                 if kdv == 0.0:
@@ -506,12 +536,12 @@ elif secim == "2. KDV Analiz Robotu":
                     kdv = first_amount_after_label(block, KDV_HESAPLANAN_IFADESI, lookahead_chars=780)
                 log_yaz(logs, terminal, f"[{pdf_name} | {idx}] KDV: {para_formatla(kdv)}", color="#d7d7d7")
 
-                # 5) POS (İstenen satır)
+                # POS
                 log_yaz(logs, terminal, f"[{pdf_name} | {idx}] POS aranıyor (Kredi Kartı...KDV Dahil...Bedel)...", color="#d7d7d7")
                 pos = pos_bul_istenen_satirdan(block)
                 log_yaz(logs, terminal, f"[{pdf_name} | {idx}] POS: {para_formatla(pos)}", color="#d7d7d7")
 
-                # 6) Hesap
+                # Hesap
                 beyan_toplami = matrah + kdv
                 fark = pos - beyan_toplami
 
