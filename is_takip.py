@@ -176,7 +176,7 @@ def parse_phones(cell_text: str) -> list:
 
 def whatsapp_gonder(numara: str, mesaj: str) -> bool:
     if not numara or ID_INSTANCE == "YOUR_INSTANCE_ID":
-        st.warning(f"WhatsApp API Ayarlı Değil. Mesaj (Simülasyon): {mesaj[:20]}...")
+        # st.warning(f"WhatsApp API Ayarlı Değil. Mesaj (Simülasyon): {mesaj[:20]}...")
         return False
     numara = normalize_phone(numara)
     if not numara: return False
@@ -364,7 +364,7 @@ elif secim == "2. KDV Analiz Robotu":
                     st.dataframe(yuk_counts, use_container_width=True, hide_index=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # --- YENİ MODÜL: TOPLU İŞ OLUŞTURUCU ---
+        # --- MODÜL 1: TOPLU İŞ OLUŞTURUCU ---
         with st.expander("🔄 Toplu / Dönemsel İş Oluşturucu (Çoklu Seçim)", expanded=False):
             st.info("Buradan seçeceğiniz birden fazla mükellefe aynı anda iş atayabilirsiniz.")
             t_col1, t_col2, t_col3 = st.columns(3)
@@ -407,6 +407,67 @@ elif secim == "2. KDV Analiz Robotu":
                     st.success(f"✅ {count} adet iş oluşturuldu.")
                     time.sleep(1)
                     st.rerun()
+
+        # --- MODÜL 2: TOPLU İŞLEM (YENİ EKLENDİ) ---
+        with st.expander("⚡ Toplu İşlem Menüsü (Çoklu Kapatma / Devretme)", expanded=False):
+            st.warning("Dikkat: Burada yapacağınız değişiklikler seçilen TÜM işlere uygulanır.")
+            filtre_col1, filtre_col2 = st.columns(2)
+            with filtre_col1:
+                t_filter_durum = st.multiselect("Şu Durumdaki İşleri Listele:", ["AÇIK", "İNCELEMEDE", "KAPANDI"], default=["AÇIK", "İNCELEMEDE"])
+            with filtre_col2:
+                t_filter_personel = st.selectbox("Personel Filtresi", ["(Hepsi)"] + dfp["Personel"].astype(str).tolist())
+
+            df_islem = dfy.copy()
+            if t_filter_durum: df_islem = df_islem[df_islem["Durum"].isin(t_filter_durum)]
+            if t_filter_personel != "(Hepsi)": df_islem = df_islem[df_islem["Sorumlu"] == t_filter_personel]
+
+            if df_islem.empty: st.info("Kriterlere uygun iş bulunamadı.")
+            else:
+                df_islem["Görünüm"] = df_islem["Mükellef"] + " | " + df_islem["Konu"] + " (" + df_islem["SonTarih"] + ")"
+                secilen_is_idleri = st.multiselect(
+                    f"İşlem Yapılacak Kayıtları Seçin (Toplam {len(df_islem)} kayıt listelendi)",
+                    options=df_islem["IsID"].tolist(),
+                    format_func=lambda x: df_islem[df_islem["IsID"]==x]["Görünüm"].values[0],
+                    key="batch_select_box"
+                )
+                st.markdown(f"**Seçili Kayıt Sayısı:** {len(secilen_is_idleri)}")
+
+                if secilen_is_idleri:
+                    st.markdown("---")
+                    act_col1, act_col2 = st.columns(2)
+                    with act_col1: toplu_yeni_durum = st.selectbox("Yeni Durum Ne Olsun?", ["(Değiştirme)", "KAPANDI", "İNCELEMEDE", "İPTAL", "AÇIK"])
+                    with act_col2: 
+                        personel_listesi = ["(Değiştirme)"] + dfp[dfp["Aktif"]=="Evet"]["Personel"].tolist()
+                        toplu_yeni_sorumlu = st.selectbox("Yeni Sorumlu Kim Olsun?", personel_listesi)
+
+                    if st.button("⚡ SEÇİLENLERİ UYGULA", type="primary", use_container_width=True):
+                        progress_text = "İşlemler uygulanıyor..."
+                        my_bar = st.progress(0, text=progress_text)
+                        for idx, target_id in enumerate(secilen_is_idleri):
+                            updates = {}
+                            update_log = []
+                            if toplu_yeni_durum != "(Değiştirme)":
+                                updates["Durum"] = toplu_yeni_durum
+                                if toplu_yeni_durum == "KAPANDI": updates["KapanisZamani"] = now_str()
+                                update_log.append(f"Durum -> {toplu_yeni_durum}")
+                            if toplu_yeni_sorumlu != "(Değiştirme)":
+                                updates["Sorumlu"] = toplu_yeni_sorumlu
+                                yeni_tel = ""
+                                p_row = dfp[dfp["Personel"] == toplu_yeni_sorumlu]
+                                if not p_row.empty: yeni_tel = normalize_phone(p_row.iloc[0]["Telefon"])
+                                updates["SorumluTel"] = yeni_tel
+                                update_log.append(f"Sorumlu -> {toplu_yeni_sorumlu}")
+
+                            if updates:
+                                updates["GuncellemeZamani"] = now_str()
+                                curr_note = dfy[dfy["IsID"] == target_id].iloc[0]["Not"]
+                                log_msg = f" | [Toplu İşlem: {', '.join(update_log)} - {now_str()}]"
+                                updates["Not"] = str(curr_note) + log_msg
+                                update_yapilacak_is(target_id, updates)
+                            my_bar.progress((idx + 1) / len(secilen_is_idleri))
+                        st.success(f"✅ {len(secilen_is_idleri)} adet kayıt güncellendi!")
+                        time.sleep(1)
+                        st.rerun()
 
         # TEKİL İŞ & NOTLAR
         col_left, col_right = st.columns([1.25, 1.0], gap="large")
@@ -515,7 +576,7 @@ elif secim == "2. KDV Analiz Robotu":
                 durum, oncelik, son_t = str(r.get("Durum","")), str(r.get("Öncelik","")), str(r.get("SonTarih",""))
                 gecik_pill = "<span class='pill'><strong>GECİKMİŞ</strong></span>" if (pd.to_datetime(son_t,errors='coerce') < today_dt and durum in ["AÇIK","İNCELEMEDE"]) else ""
                 
-                # HTML Fix: Indentation removed for clean rendering
+                # HTML SOLA YASLI - DÜZELTİLMİŞ HAL
                 html = f"""<div class="{status_class(durum)}"><div class="strip"></div><div class="wrap"><div class="top">
 <div><div class="title">{safe_html_text(r.get("Mükellef",""))} — {safe_html_text(r.get("Konu",""))}</div>
 <div class="sub">VKN: {safe_html_text(r.get("VKN",""))} · Dönem: {safe_html_text(r.get("Dönem",""))} · ID: {r.get("IsID","")}</div></div>
